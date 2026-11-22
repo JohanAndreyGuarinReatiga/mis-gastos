@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mis Gastos</title>
+  <meta name="description" content="Organiza tus gastos y guarda las facturas">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <!-- ============ LOGIN ============ -->
+  <section id="view-login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand-big">🧾</div>
+      <h1>Mis Gastos</h1>
+      <p class="muted">Ingresa para ver tus gastos y facturas</p>
+      <label>Correo
+        <input type="email" name="email" autocomplete="username" required>
+      </label>
+      <label>Contraseña
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button class="btn btn-primary btn-block" type="submit">Ingresar</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <!-- ============ APP ============ -->
+  <div id="app" class="app" hidden>
+    <nav class="nav">
+      <div class="brand">🧾 <span>Mis Gastos</span></div>
+      <a href="#inicio" data-view="inicio" class="nav-item"><span class="ico">📊</span><span>Inicio</span></a>
+      <a href="#gastos" data-view="gastos" class="nav-item"><span class="ico">📋</span><span>Gastos</span></a>
+      <button class="nav-item nav-add" id="nav-add" type="button" aria-label="Nuevo gasto"><span class="ico">＋</span><span>Nuevo</span></button>
+      <a href="#ajustes" data-view="ajustes" class="nav-item"><span class="ico">⚙️</span><span>Ajustes</span></a>
+    </nav>
+
+    <main class="main">
+      <!-- INICIO -->
+      <section id="view-inicio" class="view">
+        <header class="view-head">
+          <h2>Resumen</h2>
+          <div class="month-picker">
+            <button class="btn btn-icon" id="mes-prev" aria-label="Mes anterior">‹</button>
+            <span id="mes-label"></span>
+            <button class="btn btn-icon" id="mes-next" aria-label="Mes siguiente">›</button>
+          </div>
+        </header>
+        <div class="stats">
+          <div class="stat stat-main"><span class="stat-label">Total del mes</span><span class="stat-value" id="st-total">$0</span><span class="stat-sub" id="st-var"></span></div>
+          <div class="stat"><span class="stat-label">Gastos</span><span class="stat-value" id="st-count">0</span></div>
+          <div class="stat"><span class="stat-label">Promedio diario</span><span class="stat-value" id="st-prom">$0</span></div>
+          <div class="stat"><span class="stat-label">Sin factura</span><span class="stat-value" id="st-sinfac">0</span></div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Por categoría</h3>
+            <div class="chart-wrap"><canvas id="chart-cat"></canvas></div>
+            <ul class="cat-legend" id="cat-legend"></ul>
+          </div>
+          <div class="card">
+            <h3>Últimos 6 meses</h3>
+            <div class="chart-wrap"><canvas id="chart-mes"></canvas></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Recientes</h3><a href="#gastos" class="link">Ver todos</a></div>
+          <ul class="list" id="recientes"></ul>
+        </div>
+      </section>
+
+      <!-- GASTOS -->
+      <section id="view-gastos" class="view" hidden>
+        <header class="view-head">
+          <h2>Gastos</h2>
+          <span class="muted" id="lista-total"></span>
+        </header>
+        <div class="filters">
+          <input type="search" id="f-buscar" placeholder="Buscar proveedor o descripción…">
+          <input type="month" id="f-mes" aria-label="Mes">
+          <select id="f-cat" aria-label="Categoría"><option value="">Todas las categorías</option></select>
+        </div>
+        <div id="lista-gastos"></div>
+      </section>
+
+      <!-- AJUSTES -->
+      <section id="view-ajustes" class="view" hidden>
+        <header class="view-head"><h2>Ajustes</h2></header>
+        <div class="card">
+          <div class="card-head"><h3>Categorías</h3><button class="btn btn-sm" id="cat-add" type="button">＋ Agregar</button></div>
+          <ul class="list" id="lista-cats"></ul>
+        </div>
+        <div class="card">
+          <h3>Exportar</h3>
+          <p class="muted">Descarga tus gastos para Excel o tu contador.</p>
+          <div class="row">
+            <input type="month" id="exp-mes" aria-label="Mes a exportar">
+            <label class="check"><input type="checkbox" id="exp-todo"> Todo el historial</label>
+          </div>
+          <div class="row">
+            <button class="btn" id="exp-xlsx" type="button">⬇ Excel (.xlsx)</button>
+            <button class="btn" id="exp-csv" type="button">⬇ CSV</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Cuenta</h3>
+          <p class="muted" id="user-email"></p>
+          <button class="btn btn-danger" id="logout" type="button">Cerrar sesión</button>
+        </div>
+      </section>
+    </main>
+
+  </div>
+
+  <!-- ============ MODAL: FORMULARIO GASTO ============ -->
+  <dialog id="dlg-gasto" class="sheet">
+    <form id="form-gasto" method="dialog">
+      <header class="sheet-head">
+        <h3 id="form-title">Nuevo gasto</h3>
+        <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="sheet-body">
+        <label class="monto-field">Monto (COP)
+          <input type="text" name="monto" inputmode="numeric" autocomplete="off" placeholder="$ 0" required>
+        </label>
+        <div class="field">
+          <span class="field-label">Categoría</span>
+          <div class="chips" id="form-cats"></div>
+        </div>
+        <div class="row-2">
+          <label>Fecha <input type="date" name="fecha" required></label>
+          <label>Método de pago
+            <select name="metodo_pago"></select>
+          </label>
+        </div>
+        <label>Proveedor / comercio
+          <input type="text" name="proveedor" list="proveedores" autocomplete="off" placeholder="Ej: Éxito, EPM, Uber">
+          <datalist id="proveedores"></datalist>
+        </label>
+        <label>Descripción
+          <textarea name="descripcion" rows="2" placeholder="Opcional"></textarea>
+        </label>
+        <div class="field">
+          <span class="field-label">Facturas (fotos o PDF)</span>
+          <div class="row">
+            <label class="btn btn-file">📷 Tomar foto
+              <input type="file" accept="image/*" capture="environment" id="in-camara" hidden>
+            </label>
+            <label class="btn btn-file">📎 Subir archivo
+              <input type="file" accept="image/*,application/pdf" multiple id="in-archivo" hidden>
+            </label>
+          </div>
+          <div class="adj-grid" id="form-adjuntos"></div>
+        </div>
+      </div>
+      <footer class="sheet-foot">
+        <button class="btn" type="button" data-close>Cancelar</button>
+        <button class="btn btn-primary" type="submit" id="btn-guardar">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- ============ MODAL: DETALLE ============ -->
+  <dialog id="dlg-detalle" class="sheet">
+    <div>
+      <header class="sheet-head">
+        <h3>Detalle</h3>
+        <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="sheet-body" id="detalle-body"></div>
+      <footer class="sheet-foot">
+        <button class="btn btn-danger" type="button" id="det-borrar">Eliminar</button>
+        <button class="btn btn-primary" type="button" id="det-editar">Editar</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- ============ MODAL: CATEGORÍA ============ -->
+  <dialog id="dlg-cat" class="sheet sheet-sm">
+    <form id="form-cat" method="dialog">
+      <header class="sheet-head">
+        <h3 id="cat-title">Categoría</h3>
+        <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="sheet-body">
+        <div class="row-2">
+          <label>Ícono <input type="text" name="icono" maxlength="4" required></label>
+          <label>Color <input type="color" name="color" required></label>
+        </div>
+        <label>Nombre <input type="text" name="nombre" maxlength="40" required></label>
+      </div>
+      <footer class="sheet-foot">
+        <button class="btn btn-danger" type="button" id="cat-borrar">Eliminar</button>
+        <button class="btn btn-primary" type="submit">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- ============ VISOR ============ -->
+  <dialog id="dlg-visor" class="visor">
+    <button class="btn btn-icon visor-close" type="button" data-close aria-label="Cerrar">✕</button>
+    <img id="visor-img" alt="Factura">
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="loader" class="loader"><div class="spinner"></div></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
