@@ -41,6 +41,14 @@ create table if not exists public.adjuntos (
 -- Productos del gasto: [{ "descripcion": "Leche", "cantidad": 1, "valor": 4950 }, ...]
 alter table public.gastos add column if not exists items jsonb not null default '[]'::jsonb;
 
+-- Datos de la factura y huella de archivos (detección de facturas repetidas)
+alter table public.gastos   add column if not exists numero_factura text;
+alter table public.gastos   add column if not exists nit text;
+alter table public.gastos   add column if not exists cufe text;
+alter table public.adjuntos add column if not exists hash text;
+create index if not exists gastos_numero_idx on public.gastos (user_id, numero_factura);
+create index if not exists adjuntos_hash_idx on public.adjuntos (user_id, hash);
+
 create index if not exists gastos_user_fecha_idx on public.gastos (user_id, fecha desc);
 create index if not exists gastos_categoria_idx  on public.gastos (categoria_id);
 create index if not exists adjuntos_gasto_idx    on public.adjuntos (gasto_id);

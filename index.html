@@ -132,6 +132,7 @@
         <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
       </header>
       <div class="sheet-body">
+        <div id="form-repetido" hidden></div>
         <div class="field">
           <span class="field-label">Factura (foto o PDF) — se lee automáticamente</span>
           <div class="row">
@@ -165,6 +166,10 @@
           <input type="text" name="proveedor" list="proveedores" autocomplete="off" placeholder="Ej: Éxito, EPM, Uber">
           <datalist id="proveedores"></datalist>
         </label>
+        <div class="row-2">
+          <label>N.º de factura <input type="text" name="numero_factura" autocomplete="off" placeholder="Opcional"></label>
+          <label>NIT emisor <input type="text" name="nit" inputmode="numeric" autocomplete="off" placeholder="Opcional"></label>
+        </div>
         <label>Descripción
           <textarea name="descripcion" rows="2" placeholder="Opcional"></textarea>
         </label>
@@ -198,6 +203,25 @@
       <footer class="sheet-foot">
         <button class="btn btn-danger" type="button" id="det-borrar">Eliminar</button>
         <button class="btn btn-primary" type="button" id="det-editar">Editar</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- ============ MODAL: FACTURA REPETIDA ============ -->
+  <dialog id="dlg-repetido" class="sheet sheet-sm">
+    <div>
+      <header class="sheet-head">
+        <h3>⚠️ Factura ya registrada</h3>
+        <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="sheet-body">
+        <p>Este gasto coincide con uno que ya guardaste. Revísalo antes de continuar para no contarlo dos veces:</p>
+        <div id="repetido-lista"></div>
+        <p class="muted small">Toca un gasto para verlo con sus facturas.</p>
+      </div>
+      <footer class="sheet-foot">
+        <button class="btn" type="button" data-close>Revisar</button>
+        <button class="btn btn-danger" type="button" id="rep-guardar">Guardar de todos modos</button>
       </footer>
     </div>
   </dialog>

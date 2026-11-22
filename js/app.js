@@ -125,20 +125,93 @@
     S.cats = data;
   }
 
+  // S.v3: la base ya tiene la migración 003 (n.º factura, NIT, CUFE y huella de archivos).
+  S.v3 = true;
+  let avisoMigracion = false;
   async function cargarGastos() {
     const todos = [];
     const paso = 1000;
     for (let desde = 0; ; desde += paso) {
       const { data, error } = await sb.from('gastos')
-        .select('*, adjuntos(id, ruta, nombre, tipo, tamano)')
+        .select(`*, adjuntos(id, ruta, nombre, tipo, tamano${S.v3 ? ', hash' : ''})`)
         .order('fecha', { ascending: false })
         .order('id', { ascending: false })
         .range(desde, desde + paso - 1);
+      if (error && S.v3 && /42703|PGRST/.test(error.code || '') && /hash/.test(error.message || '')) {
+        S.v3 = false;
+        if (!avisoMigracion) { avisoMigracion = true; setTimeout(() => toast('Para detectar facturas repetidas por archivo y n.º de factura, ejecuta supabase/migraciones/003_entretenimiento_y_repetidos.sql en Supabase.', true), 800); }
+        return cargarGastos();
+      }
       if (error) throw error;
       todos.push(...data);
       if (data.length < paso) break;
     }
     S.gastos = todos.map((g) => ({ ...g, monto: Number(g.monto) }));
+    calcularRepetidos();
+  }
+
+  // ---------- Facturas repetidas ----------
+  const normTxt = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const normNum = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
+  const normNit = (s) => String(s || '').replace(/\D/g, '').slice(0, 9); // sin dígito de verificación
+  /** N.º de factura del gasto (campo propio o, en gastos antiguos, dentro de la descripción "Factura X"). */
+  const numeroDe = (g) => normNum(g.numero_factura || (/factura\s+(?:n[°ºo.]?\s*)?([A-Z0-9-]{3,})/i.exec(g.descripcion || '') || [])[1]);
+  const nitDe = (g) => normNit(g.nit || (/NIT\s+([\d.]+)/i.exec(g.descripcion || '') || [])[1]);
+  const firmaItems = (items) => (items || []).filter((i) => i.descripcion || i.valor)
+    .map((i) => `${normTxt(i.descripcion)}|${Number(i.cantidad) || 1}|${Math.round(Number(i.valor) || 0)}`).sort().join(';');
+
+  /**
+   * Busca gastos ya registrados que parezcan la misma factura que `c`.
+   * c: { id?, fecha, monto, proveedor, numero_factura, nit, cufe, items, hashes: [] }
+   * Devuelve [{ g, motivos: [] }] ordenado por número de coincidencias.
+   */
+  function buscarRepetidos(c) {
+    const num = normNum(c.numero_factura);
+    const nit = normNit(c.nit);
+    const prov = normTxt(c.proveedor);
+    const fi = firmaItems(c.items);
+    const hashes = new Set((c.hashes || []).filter(Boolean));
+    const res = [];
+    for (const g of S.gastos) {
+      if (g.id === c.id) continue;
+      const m = [];
+      if (c.cufe && g.cufe && c.cufe.toLowerCase() === g.cufe.toLowerCase()) m.push('mismo CUFE de factura electrónica');
+      const gNum = numeroDe(g);
+      if (num && gNum && num === gNum) {
+        const gNit = nitDe(g);
+        const mismoEmisor = (nit && gNit) ? nit === gNit : (!prov || !normTxt(g.proveedor) || prov === normTxt(g.proveedor));
+        if (mismoEmisor) m.push('mismo n.º de factura');
+      }
+      if (hashes.size && (g.adjuntos || []).some((a) => a.hash && hashes.has(a.hash))) m.push('mismo archivo de factura');
+      if (g.fecha === c.fecha && Math.round(g.monto) === Math.round(c.monto)) {
+        const mismoProv = prov && prov === normTxt(g.proveedor);
+        const mismosItems = fi && fi === firmaItems(g.items);
+        if (mismoProv && mismosItems) m.push('misma fecha, monto, proveedor y productos');
+        else if (mismoProv) m.push('misma fecha, monto y proveedor');
+        else if (mismosItems) m.push('misma fecha, monto y productos');
+      }
+      if (m.length) res.push({ g, motivos: m });
+    }
+    return res.sort((a, b) => b.motivos.length - a.motivos.length || b.g.id - a.g.id);
+  }
+
+  /** Marca en S.repetidos (id -> [{g, motivos}]) los gastos ya guardados que se repiten entre sí. */
+  function calcularRepetidos() {
+    S.repetidos = new Map();
+    for (const g of S.gastos) {
+      const r = buscarRepetidos({ ...g, hashes: (g.adjuntos || []).map((a) => a.hash) });
+      if (r.length) S.repetidos.set(g.id, r);
+    }
+  }
+
+  const resumenGasto = (g) => `${g.proveedor || catDe(g.categoria_id).nombre} · ${fechaCorta(g.fecha)} · ${fmt(g.monto)}${numeroDe(g) ? ` · Fact. ${g.numero_factura || numeroDe(g)}` : ''}`;
+
+  /** HTML del aviso con enlaces "Ver" a cada gasto ya registrado. */
+  function avisoRepetidoHTML(lista, titulo = '⚠️ Factura posiblemente ya registrada') {
+    return `<div class="aviso-rep"><b>${esc(titulo)}</b>
+      <ul>${lista.slice(0, 5).map(({ g, motivos }) => `<li>
+        <button type="button" class="link-btn" data-ver-gasto="${g.id}">${esc(resumenGasto(g))}</button>
+        <small>${esc(motivos.join(' · '))}</small></li>`).join('')}</ul></div>`;
   }
 
   async function urlsFirmadas(rutas) {
@@ -184,7 +257,7 @@
     return `<li class="item-wrap">
       <div class="item" data-id="${g.id}">
         <span class="item-ico" style="background:${esc(c.color)}22">${esc(c.icono)}</span>
-        <div class="item-main"><div class="item-title">${esc(titulo)}</div><div class="item-sub">${esc(sub)}</div></div>
+        <div class="item-main"><div class="item-title">${esc(titulo)}</div><div class="item-sub">${S.repetidos?.has(g.id) ? '<span class="badge-rep">⚠️ repetido</span> ' : ''}${esc(sub)}</div></div>
         <div class="item-amount">${fmt(g.monto)}<small>${nAdj ? `📎 ${nAdj}` : 'sin factura'}</small></div>
       </div>
       ${items.length ? `<details class="prod-toggle"><summary>${items.length} producto${items.length === 1 ? '' : 's'}</summary>${prodsHTML(items)}</details>` : ''}
@@ -305,21 +378,35 @@
   document.addEventListener('click', (e) => {
     const it = e.target.closest('.item[data-id]');
     if (it) abrirDetalle(Number(it.dataset.id));
+    // Enlace "ver gasto ya registrado" de los avisos de repetido
+    const ver = e.target.closest('[data-ver-gasto]');
+    if (ver) {
+      e.preventDefault();
+      // Si viene del formulario, el detalle se abre encima; al cerrarlo se vuelve al aviso/formulario.
+      abrirDetalle(Number(ver.dataset.verGasto), { soloVer: $('#dlg-gasto').open });
+    }
   });
 
   // ---------- Detalle ----------
-  async function abrirDetalle(id) {
+  /** soloVer: se abre desde el formulario (aviso de repetido); oculta Editar/Eliminar para no perder lo que se está escribiendo. */
+  async function abrirDetalle(id, { soloVer = false } = {}) {
     const g = S.gastos.find((x) => x.id === id);
     if (!g) return;
     S.detalle = g;
     const c = catDe(g.categoria_id);
     const adj = g.adjuntos || [];
+    const rep = S.repetidos?.get(g.id) || [];
+    $('#det-editar').hidden = $('#det-borrar').hidden = soloVer;
     $('#detalle-body').innerHTML = `
+      ${soloVer ? '<p class="muted small">Gasto ya registrado (solo lectura). Cierra para volver al formulario.</p>' : ''}
+      ${rep.length ? avisoRepetidoHTML(rep, '⚠️ Este gasto parece repetido de:') : ''}
       <div class="det-monto">${fmt(g.monto)}</div>
       <dl class="det-rows">
         <dt>Categoría</dt><dd>${esc(c.icono)} ${esc(c.nombre)}</dd>
         <dt>Fecha</dt><dd>${esc(fechaLarga(g.fecha))}</dd>
         ${g.proveedor ? `<dt>Proveedor</dt><dd>${esc(g.proveedor)}</dd>` : ''}
+        ${g.numero_factura ? `<dt>N.º factura</dt><dd>${esc(g.numero_factura)}</dd>` : ''}
+        ${g.nit ? `<dt>NIT</dt><dd>${esc(g.nit)}</dd>` : ''}
         ${g.metodo_pago ? `<dt>Pago</dt><dd>${esc(g.metodo_pago)}</dd>` : ''}
         ${g.descripcion ? `<dt>Descripción</dt><dd>${esc(g.descripcion)}</dd>` : ''}
       </dl>
@@ -328,7 +415,8 @@
         <span class="field-label">Facturas (${adj.length}) — toca para ver</span>
         <div class="adj-grid" id="det-adj">${adj.length ? adj.map(() => '<div class="adj"><div class="spinner"></div></div>').join('') : '<p class="muted">Sin facturas adjuntas.</p>'}</div>
       </div>`;
-    $('#dlg-detalle').showModal();
+    if (!$('#dlg-detalle').open) $('#dlg-detalle').showModal();
+    $('#dlg-detalle .sheet-body').scrollTo?.(0, 0);
     if (adj.length) {
       try {
         const urls = await urlsFirmadas(adj.map((a) => a.ruta));
@@ -497,6 +585,7 @@
       const { error } = await sb.from('gastos').delete().eq('id', g.id);
       if (error) throw error;
       S.gastos = S.gastos.filter((x) => x.id !== g.id);
+      calcularRepetidos();
       $('#dlg-detalle').close();
       toast('Gasto eliminado');
       refrescar();
@@ -528,6 +617,8 @@
       leyendo: false,
       items: itemsDe(g || {}).map((it) => ({ ...it })),
       teniaItems: itemsDe(g || {}).length > 0,
+      cufe: g?.cufe || null,
+      repetidoAceptado: null, // ids de repetidos que el usuario decidió guardar igual
     };
     $('#form-prods').open = false;
     renderProds();
@@ -540,10 +631,13 @@
     fG.metodo_pago.value = g?.metodo_pago || store.get('ultimoPago') || '';
     fG.proveedor.value = g?.proveedor || '';
     fG.descripcion.value = g?.descripcion || '';
+    fG.numero_factura.value = g?.numero_factura || '';
+    fG.nit.value = g?.nit || '';
     $('#proveedores').innerHTML = [...new Set(S.gastos.map((x) => x.proveedor).filter(Boolean))].slice(0, 200).map((p) => `<option value="${esc(p)}">`).join('');
     renderChips();
     actualizarSumaProds();
     renderAdjForm();
+    comprobarRepetidoEnForm();
     $('#dlg-gasto').showModal();
     if (!g) setTimeout(() => fG.monto.focus(), 50);
   }
@@ -620,9 +714,50 @@
     .map((it) => ({ descripcion: String(it.descripcion || '').trim(), cantidad: Number(it.cantidad) || 1, valor: Math.round(Number(it.valor) || 0) }))
     .filter((it) => it.descripcion || it.valor);
 
+  // ---------- Aviso de repetido en el formulario ----------
+  function candidatoForm() {
+    const E = S.edit;
+    return {
+      id: E.id,
+      fecha: fG.fecha.value,
+      monto: Number(digitos(fG.monto.value)),
+      proveedor: fG.proveedor.value,
+      numero_factura: fG.numero_factura.value,
+      nit: fG.nit.value,
+      cufe: E.cufe,
+      items: itemsLimpios(E.items),
+      hashes: E.nuevos.map((n) => n.hash),
+    };
+  }
+  function comprobarRepetidoEnForm() {
+    if (!S.edit) return [];
+    const rep = buscarRepetidos(candidatoForm());
+    const box = $('#form-repetido');
+    box.hidden = !rep.length;
+    box.innerHTML = rep.length ? avisoRepetidoHTML(rep) : '';
+    return rep;
+  }
+  let tRep;
+  const comprobarLuego = () => { clearTimeout(tRep); tRep = setTimeout(comprobarRepetidoEnForm, 300); };
+  ['monto', 'fecha', 'proveedor', 'numero_factura', 'nit'].forEach((k) => fG[k].addEventListener('input', comprobarLuego));
+  $('#prods-filas').addEventListener('input', comprobarLuego);
+
+  $('#rep-guardar').addEventListener('click', () => {
+    S.edit.repetidoAceptado = $('#dlg-repetido').dataset.firma;
+    $('#dlg-repetido').close();
+    fG.requestSubmit();
+  });
+
+  async function sha256(file) {
+    try {
+      const buf = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+      return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch { return null; }
+  }
+
   // ---------- Lectura automática de facturas ----------
-  const CAMPOS_AUTO = ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago', 'cat', 'items'];
-  ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago'].forEach((k) => {
+  const CAMPOS_AUTO = ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago', 'cat', 'items', 'numero_factura', 'nit'];
+  ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago', 'numero_factura', 'nit'].forEach((k) => {
     fG[k].addEventListener('input', () => { S.edit?.tocado.add(k); fG[k].classList.remove('auto'); });
   });
 
@@ -664,7 +799,11 @@
       if (S.edit !== E) return;
       const llenos = aplicarLectura(E, r, forzar);
       const fuente = r.fuentes.join(' + ');
-      if (llenos.length) {
+      const rep = comprobarRepetidoEnForm();
+      if (rep.length) {
+        banner(`✨ Completé ${llenos.join(', ') || 'la lectura'} (${fuente}). ⚠️ Ojo: esta factura parece ya registrada (mira el aviso de arriba).`, { error: true });
+        $('#form-repetido').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else if (llenos.length) {
         banner(`✨ Completé ${llenos.join(', ')} (${fuente}).${r.montoSeguro === false ? ' El monto es una suposición:' : ''} Revisa antes de guardar.`);
       } else if (r.monto || r.fecha || r.proveedor) {
         banner(`Leí la factura (${fuente}), pero ya habías llenado esos campos.`);
@@ -692,8 +831,9 @@
     if (r.monto) poner('monto', `$ ${fmtNum.format(r.monto)}`, 'monto');
     poner('fecha', r.fecha, 'fecha');
     poner('proveedor', r.proveedor, 'proveedor');
-    const desc = [r.numero && `Factura ${r.numero}`, r.nit && `NIT ${r.nit}`].filter(Boolean).join(' · ');
-    poner('descripcion', desc, 'n.º de factura');
+    poner('numero_factura', r.numero, 'n.º de factura');
+    poner('nit', r.nit, 'NIT');
+    if (r.cufe && !E.cufe) E.cufe = r.cufe;
     if (r.metodo_pago && CFG.METODOS_PAGO.includes(r.metodo_pago)) poner('metodo_pago', r.metodo_pago, 'método de pago');
 
     if (r.items?.length && (!E.tocado.has('items') || (forzar && !itemsLimpios(E.items).length))) {
@@ -755,9 +895,11 @@
       if (f.size > MAX_FILE) { toast(`${f.name} supera 10 MB`, true); continue; }
       // Para leer usamos el original (mejor resolución); para subir, el comprimido.
       // preview: URL local para miniatura y visor (imágenes y PDF).
-      S.edit.nuevos.push({ key: `n${Math.random().toString(36).slice(2)}`, file: f, original: f0, preview: URL.createObjectURL(f) });
+      // hash: huella del archivo original para reconocer la misma factura subida dos veces.
+      S.edit.nuevos.push({ key: `n${Math.random().toString(36).slice(2)}`, file: f, original: f0, preview: URL.createObjectURL(f), hash: await sha256(f0) });
     }
     renderAdjForm();
+    comprobarRepetidoEnForm();
     const agregado = S.edit.nuevos.length > antes ? S.edit.nuevos[S.edit.nuevos.length - 1] : null;
     // Lectura automática si el monto aún no lo escribió el usuario.
     if (agregado && !S.edit.tocado.has('monto')) leerFactura(agregado.original);
@@ -804,6 +946,24 @@
     // aunque aún no se haya ejecutado la migración 002_productos.sql.
     const items = itemsLimpios(E.items);
     if (items.length || E.teniaItems) fila.items = items;
+    if (S.v3) {
+      fila.numero_factura = fG.numero_factura.value.trim() || null;
+      fila.nit = fG.nit.value.trim() || null;
+      fila.cufe = E.cufe || null;
+    } else if (fG.numero_factura.value.trim() && !/factura/i.test(fila.descripcion || '')) {
+      // Sin la migración 003: se conserva el n.º en la descripción para no perderlo.
+      fila.descripcion = [fila.descripcion, `Factura ${fG.numero_factura.value.trim()}`, fG.nit.value.trim() && `NIT ${fG.nit.value.trim()}`].filter(Boolean).join(' · ');
+    }
+
+    // ¿Factura ya registrada? Avisar antes de guardar (una vez por cada conjunto de coincidencias).
+    const rep = buscarRepetidos(candidatoForm());
+    const firma = rep.map((r) => r.g.id).join(',');
+    if (rep.length && E.repetidoAceptado !== firma) {
+      $('#repetido-lista').innerHTML = avisoRepetidoHTML(rep, rep.length === 1 ? 'Coincide con:' : `Coincide con ${rep.length} gastos:`);
+      $('#dlg-repetido').dataset.firma = firma;
+      $('#dlg-repetido').showModal();
+      return;
+    }
     const eraEdicion = !!E.id;
     const btn = $('#btn-guardar');
     btn.disabled = true;
@@ -825,7 +985,7 @@
         const ruta = `${S.user.id}/${id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension(n.file)}`;
         const up = await sb.storage.from(CFG.BUCKET).upload(ruta, n.file, { contentType: n.file.type, upsert: false });
         if (up.error) throw up.error;
-        const ins = await sb.from('adjuntos').insert({ gasto_id: id, ruta, nombre: n.file.name, tipo: n.file.type, tamano: n.file.size });
+        const ins = await sb.from('adjuntos').insert({ gasto_id: id, ruta, nombre: n.file.name, tipo: n.file.type, tamano: n.file.size, ...(S.v3 && n.hash ? { hash: n.hash } : {}) });
         if (ins.error) throw ins.error;
         URL.revokeObjectURL(n.preview);
         E.nuevos = E.nuevos.filter((x) => x !== n);
@@ -941,17 +1101,17 @@
   /** enlaces(g) -> [{ texto, url }] por cada factura del gasto */
   function construirLibro(lista, enlaces) {
     const maxFac = Math.max(1, ...lista.map((g) => g.adjuntos?.length || 0));
-    const cab = ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método de pago', 'Monto', 'Productos',
+    const cab = ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método de pago', 'Monto', 'Productos', 'N.º factura', 'NIT',
       ...Array.from({ length: maxFac }, (_, i) => `Factura ${i + 1}`)];
     const MONEDA = '"$"#,##0';
     const filas = lista.map((g) => {
       const fac = enlaces(g).map((e) => ({ t: 's', v: e.texto, l: { Target: e.url, Tooltip: 'Abrir factura' } }));
       return [g.fecha, catDe(g.categoria_id).nombre, g.proveedor || '', g.descripcion || '', g.metodo_pago || '',
-        { t: 'n', v: g.monto, z: MONEDA }, itemsDe(g).length || '', ...fac];
+        { t: 'n', v: g.monto, z: MONEDA }, itemsDe(g).length || '', g.numero_factura || '', g.nit || '', ...fac];
     });
     const ws = XLSX.utils.aoa_to_sheet([cab, ...filas,
       ['', '', '', '', 'TOTAL', { t: 'n', f: `SUM(F2:F${filas.length + 1})`, z: MONEDA }]]);
-    ws['!cols'] = [{ wch: 11 }, { wch: 15 }, { wch: 24 }, { wch: 32 }, { wch: 14 }, { wch: 13 }, { wch: 10 }, ...Array(maxFac).fill({ wch: 34 })];
+    ws['!cols'] = [{ wch: 11 }, { wch: 15 }, { wch: 24 }, { wch: 32 }, { wch: 14 }, { wch: 13 }, { wch: 10 }, { wch: 16 }, { wch: 14 }, ...Array(maxFac).fill({ wch: 34 })];
     ws['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(cab.length - 1)}${filas.length + 1}` };
 
     const prods = lista.flatMap((g) => itemsDe(g).map((it) => [g.fecha, g.proveedor || '', catDe(g.categoria_id).nombre, it.descripcion,
@@ -1002,11 +1162,11 @@
     try {
       const enlaces = await enlacesTemporales(lista);
       const maxFac = Math.max(0, ...lista.map((g) => g.adjuntos?.length || 0));
-      const cab = ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método de pago', 'Monto', 'Productos',
+      const cab = ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método de pago', 'Monto', 'Productos', 'N.º factura', 'NIT',
         ...Array.from({ length: maxFac }, (_, i) => `Factura ${i + 1} (enlace 7 días)`)];
       const celda = (v) => (/[";\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v);
       const filas = lista.map((g) => [g.fecha, catDe(g.categoria_id).nombre, g.proveedor || '', g.descripcion || '', g.metodo_pago || '',
-        g.monto, textoProductos(g), ...enlaces(g).map((e) => e.url)]);
+        g.monto, textoProductos(g), g.numero_factura || '', g.nit || '', ...enlaces(g).map((e) => e.url)]);
       // Separador ";" para que Excel en español (Colombia) lo abra en columnas.
       const csv = [cab, ...filas].map((f) => f.map(celda).join(';')).join('\r\n');
       descargar(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), `${nombre}.csv`);

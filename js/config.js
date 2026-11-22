@@ -12,6 +12,7 @@ window.APP_CONFIG = {
     { nombre: 'Servicios',    color: '#8b5cf6', icono: '💡' },
     { nombre: 'Salud',        color: '#ef4444', icono: '🩺' },
     { nombre: 'Hogar',        color: '#10b981', icono: '🏠' },
+    { nombre: 'Entretenimiento', color: '#ec4899', icono: '🎬' },
     { nombre: 'Otros',        color: '#64748b', icono: '📦' },
   ],
   METODOS_PAGO: ['Efectivo', 'Débito', 'Crédito', 'Transferencia', 'Nequi', 'Daviplata'],

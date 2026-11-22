@@ -84,12 +84,14 @@
     'Terpel', 'Primax', 'Biomax', 'Texaco', 'Esso', 'Mobil', 'Uber', 'DiDi', 'Cabify', 'inDrive', 'Avianca', 'LATAM', 'Wingo',
     'EPM', 'Codensa', 'Enel', 'Vanti', 'Gas Natural', 'Claro', 'Movistar', 'Tigo', 'WOM', 'ETB', 'UNE', 'DirecTV',
     'Homecenter', 'Easy', 'Falabella', 'Ikea', 'Tostao', 'Juan Valdez', 'Crepes & Waffles', 'Frisby', 'El Corral', 'McDonald\'s', 'KFC',
-    'Rappi', 'Mercado Libre', 'Amazon', 'Netflix', 'Spotify', 'Sura', 'Sanitas', 'Compensar', 'Colmédica',
+    'Rappi', 'Mercado Libre', 'Amazon', 'Netflix', 'Spotify', 'Disney+', 'HBO Max', 'Cinemark', 'Cine Colombia', 'Cinépolis', 'Procinal',
+    'Royal Films', 'Tuboleta', 'Steam', 'PlayStation', 'Xbox', 'Sura', 'Sanitas', 'Compensar', 'Colmédica',
   ];
   const PISTAS_CATEGORIA = [
     ['Alimentación', /supermerc|mercado|restaur|panader|cafe|comida|almuerzo|exito|carulla|jumbo|olimpica|\bd1\b|\bara\b|makro|surtimax|isimo|tostao|juan valdez|crepes|frisby|corral|mcdonald|kfc|rappi|pizza|asadero|fruver|carnes|licor/],
     ['Transporte', /gasolin|combustib|acpm|diesel|corriente|peaje|parqueader|terpel|primax|biomax|texaco|esso|mobil|uber|didi|cabify|indrive|taxi|transmilenio|metro de|tiquete|avianca|latam|wingo|lavadero|soat|taller|llanta/],
-    ['Servicios', /energia|acueducto|alcantarill|\bgas\b|internet|telefon|celular|epm|codensa|enel|vanti|claro|movistar|tigo|\bwom\b|\betb\b|\bune\b|directv|netflix|spotify|plan de datos|aseo|administracion/],
+    ['Entretenimiento', /\bcine|cinemark|cinepolis|procinal|royal films|netflix|spotify|disney|hbo|\bmax\b|prime video|paramount|crunchyroll|youtube premium|deezer|teatro|concierto|tuboleta|eticket|taquilla|boleta|\bbar\b|discoteca|gastrobar|parque de diversiones|salitre magico|mundo aventura|museo|videojuego|steam|playstation|xbox|nintendo|bolos|karaoke|billar|zoologico|acuario|entretenim|evento|espectaculo|\bfutbol\b|estadio/],
+    ['Servicios', /energia|acueducto|alcantarill|\bgas\b|internet|telefon|celular|epm|codensa|enel|vanti|claro|movistar|tigo|\bwom\b|\betb\b|\bune\b|directv|plan de datos|aseo|administracion/],
     ['Salud', /drog|farmac|medic|clinic|hospital|odontol|laborator|optica|eps|sura|sanitas|compensar|colmedica|cruz verde|farmatodo|locatel|pasteur|consulta/],
     ['Hogar', /homecenter|ferreter|\beasy\b|ikea|muebl|hogar|electrodom|alkosto|ktronix|falabella|aseo hogar|construc|pintur|decoraci/],
   ];
@@ -163,6 +165,8 @@
     if (nit) res.nit = nit[1].replace(/\D/g, '').replace(/(\d)(?=(\d{3})+$)/g, '$1.') + (nit[2] ? `-${nit[2]}` : '');
     const num = /(?:factura[^\n]{0,40}?|fact\.?\s*|no\.?\s*factura\s*)(?:n[°ºo.]?|no\.?|n[uú]mero|#)\s*[:.]?\s*([A-Z]{0,6}\s?-?\s?\d{2,12})/i.exec(texto);
     if (num) res.numero = num[1].replace(/\s+/g, '');
+    const cufe = /CUFE\s*[:.]?\s*([0-9a-f\s]{64,140})/i.exec(texto);
+    if (cufe) { const c = cufe[1].replace(/\s/g, ''); if (c.length >= 64) res.cufe = c.toLowerCase(); }
 
     // Proveedor
     const nConocidos = conocidos.filter(Boolean).map((p) => ({ p, k: norm(p) })).filter((x) => x.k.length >= 2);
@@ -242,7 +246,7 @@
     const n = campo('NumFac');
     if (n) res.numero = n;
     const cufe = campo('CUFE') || (/documentkey=([0-9a-f]{40,})/i.exec(txt) || [])[1];
-    if (cufe) res.cufe = cufe;
+    if (cufe) res.cufe = cufe.toLowerCase();
     if (res.monto) res.montoSeguro = true;
     return Object.keys(res).length ? res : null;
   }

@@ -19,6 +19,14 @@ las facturas en foto o PDF de cada uno.
   Todo corre en el navegador: las facturas no se envían a ningún servicio externo. Los campos que ya escribiste no se sobrescriben, y la categoría se aprende de tus gastos anteriores con el mismo proveedor.
 - **Visor integrado:** las fotos y los PDF se ven dentro de la app, a pantalla completa, con zoom, todas las páginas del PDF, flechas o deslizamiento para pasar de una factura a otra, y botón de descarga. Los PDF muestran una miniatura de su primera página.
 - **Productos del gasto:** cada gasto puede tener su lista de productos (cantidad y valor), que se llena sola al leer la factura o se edita a mano. Se muestra la suma y si cuadra con el monto. En la lista de gastos aparece como un desplegable oculto, "▸ N productos".
+- **Facturas repetidas ⚠️:** si un gasto coincide con uno ya registrado, la app avisa en el formulario y otra vez antes de guardar, con un enlace al gasto existente para revisarlo. Cuenta como coincidencia:
+  - el mismo CUFE;
+  - el mismo n.º de factura del mismo emisor;
+  - el mismo archivo de factura;
+  - la misma fecha y monto, con el mismo proveedor o los mismos productos.
+
+  Los gastos repetidos ya guardados se marcan "⚠️ repetido" en la lista y en su detalle.
+- Categorías por defecto: Alimentación, Transporte, Servicios, Salud, Hogar, Entretenimiento y Otros.
 - Resumen mensual: total, variación frente al mes anterior, promedio diario, gastos sin factura, gráfico por categoría y tendencia de 6 meses.
 - Lista con búsqueda y filtros por mes y categoría.
 - Categorías editables, con ícono y color.
@@ -34,7 +42,7 @@ las facturas en foto o PDF de cada uno.
    y marca **Auto Confirm User**.
 3. **Cerrar registros:** ve a **Authentication → Sign In / Providers** y desactiva **Allow new users to sign up**,
    para que nadie más pueda crear cuenta.
-4. **Actualizaciones de la base de datos:** si tu base se creó con una versión anterior, ejecuta en el SQL Editor los archivos de [`supabase/migraciones/`](supabase/migraciones) que falten. Por ejemplo, `002_productos.sql` agrega la lista de productos.
+4. **Actualizaciones de la base de datos:** si tu base se creó con una versión anterior, ejecuta en el SQL Editor los archivos de [`supabase/migraciones/`](supabase/migraciones) que falten. Por ejemplo, `002_productos.sql` agrega la lista de productos, y `003_entretenimiento_y_repetidos.sql` agrega la categoría Entretenimiento y los datos para detectar facturas repetidas.
 5. La URL del proyecto y la *publishable key* están en [`js/config.js`](js/config.js).
 
 ## Probar en local

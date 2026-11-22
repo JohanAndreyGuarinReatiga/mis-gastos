@@ -326,6 +326,21 @@ dialog.visor::backdrop { background: #000; }
 .prod-lista .tot { border-top: 1px dashed var(--border); padding-top: .25rem; margin-top: .15rem; font-weight: 700; }
 .det-prods { margin: 0; }
 
+/* ---------- Repetidos ---------- */
+.aviso-rep {
+  background: color-mix(in srgb, #f59e0b 16%, var(--surface)); border: 1px solid color-mix(in srgb, #f59e0b 55%, transparent);
+  border-radius: 10px; padding: .65rem .8rem; font-size: .88rem;
+}
+.aviso-rep ul { list-style: none; margin: .4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
+.aviso-rep li { display: flex; flex-direction: column; gap: .1rem; }
+.aviso-rep small { color: var(--muted); }
+.link-btn {
+  font: inherit; font-weight: 700; color: var(--primary); background: none; border: 0; padding: 0; cursor: pointer;
+  text-align: left; text-decoration: underline; text-underline-offset: 2px;
+}
+.badge-rep { color: #b45309; font-weight: 700; }
+@media (prefers-color-scheme: dark) { .badge-rep { color: #fbbf24; } }
+
 /* ---------- Toast y loader ---------- */
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--nav-h) + 20px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px);

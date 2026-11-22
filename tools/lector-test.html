@@ -68,6 +68,21 @@ CUFE: 8bb918b19ba22a694f1da11c643b5e9de39adf60311cf179179e9b33381030bcd4c3c3f156
 QRCode: https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=8bb918b19ba22a694f1da11c643b5e9de39adf60311cf179179e9b33381030bcd4c3c3f156c506ed5908f9276f5bd9b4`),
   { monto: 119000, fecha: '2026-11-12', numero: 'SETP990000002', nit: '900.373.115' });
 
+check('Cine (Entretenimiento) + CUFE', L.parsearTexto(`CINE COLOMBIA S.A.S.
+NIT 890.300.406-3
+Factura electrónica de venta No. CC-55120
+Fecha: 20/11/2026
+Boleta 2D General x2      28.000
+Combo crispetas           32.500
+TOTAL                    $ 60.500
+CUFE: 8bb918b19ba22a694f1da11c643b5e9de39adf60311cf179179e9b33381030bcd4c3c3f156c506ed5908f9276f5bd9b4`),
+  { monto: 60500, fecha: '2026-11-20', proveedor: 'Cine Colombia', categoria: 'Entretenimiento', numero: 'CC-55120',
+    cufe: '8bb918b19ba22a694f1da11c643b5e9de39adf60311cf179179e9b33381030bcd4c3c3f156c506ed5908f9276f5bd9b4' });
+check('Netflix (Entretenimiento)', L.parsearTexto(`Netflix
+Fecha 01/11/2026
+Plan Estándar
+Total $ 38.900`), { monto: 38900, proveedor: 'Netflix', categoria: 'Entretenimiento' });
+
 // ---------- 1b. Productos ----------
 function checkItems(nombre, texto, esperado) {
   const items = L.parsearTexto(texto).items || [];
