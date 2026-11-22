@@ -429,6 +429,28 @@ dialog.visor::backdrop { background: #000; }
 .prod-lista .tot { font-weight: 600; }
 .det-prods .prod-lista { background: transparent; padding: 0; }
 
+/* ---------- Almacenamiento ---------- */
+.uso { display: flex; flex-direction: column; gap: 8px; }
+.uso-barra { height: 8px; border-radius: 4px; background: var(--fill); overflow: hidden; }
+.uso-barra span { display: block; height: 100%; width: 0; border-radius: 4px; background: linear-gradient(90deg, #34aadc, var(--primary)); transition: width .6s ease; }
+.uso-barra.alto span { background: linear-gradient(90deg, var(--orange), var(--danger)); }
+.uso-texto { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 15px; flex-wrap: wrap; }
+.uso-texto .muted { font-size: 13px; }
+
+/* Control segmentado iOS */
+.segmentado { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--fill); border-radius: 9px; padding: 2px; margin-top: 8px; }
+.segmentado button {
+  font-size: 13px; font-weight: 500; border: 0; background: transparent; color: var(--text); padding: 7px 4px; border-radius: 7px; cursor: pointer;
+  letter-spacing: -.08px; transition: background .2s, box-shadow .2s;
+}
+.segmentado button[aria-checked=true] { background: var(--surface); font-weight: 600; box-shadow: 0 3px 8px rgba(0, 0, 0, .12), 0 3px 1px rgba(0, 0, 0, .04); }
+@media (prefers-color-scheme: dark) { .segmentado button[aria-checked=true] { background: #636366; } }
+
+.adj-ahorro {
+  position: absolute; right: 5px; bottom: 5px; background: var(--ok); color: #fff; font-size: 10px; font-weight: 700;
+  padding: 2px 6px; border-radius: 5px; letter-spacing: .2px;
+}
+
 /* ---------- Repetidos ---------- */
 .aviso-rep {
   background: color-mix(in srgb, var(--orange) 14%, var(--surface)); border-radius: var(--radius);

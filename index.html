@@ -107,6 +107,22 @@
           <ul class="list" id="lista-cats"></ul>
         </div>
         <div class="card">
+          <h3>Almacenamiento</h3>
+          <div class="uso">
+            <div class="uso-barra"><span id="uso-relleno"></span></div>
+            <div class="uso-texto"><b id="uso-usado">—</b><span class="muted" id="uso-detalle"></span></div>
+          </div>
+          <span class="field-label" style="margin-top:14px;display:block">Compresión al subir</span>
+          <div class="segmentado" id="seg-compresion" role="radiogroup" aria-label="Nivel de compresión">
+            <button type="button" data-preset="calidad" role="radio">Calidad</button>
+            <button type="button" data-preset="equilibrado" role="radio">Equilibrado</button>
+            <button type="button" data-preset="ahorro" role="radio">Ahorro</button>
+          </div>
+          <p class="muted small" id="compresion-desc"></p>
+          <button class="btn btn-block" id="btn-optimizar" type="button">✨ Optimizar facturas ya guardadas</button>
+          <p class="muted small" id="optimizar-progreso" hidden></p>
+        </div>
+        <div class="card">
           <h3>Exportar</h3>
           <p class="muted">Descarga tus gastos para Excel o tu contador.</p>
           <div class="row">
@@ -277,6 +293,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="js/config.js"></script>
   <script src="js/lector.js"></script>
+  <script src="js/compresor.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

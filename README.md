@@ -26,6 +26,10 @@ las facturas en foto o PDF de cada uno.
   - la misma fecha y monto, con el mismo proveedor o los mismos productos.
 
   Los gastos repetidos ya guardados se marcan "⚠️ repetido" en la lista y en su detalle.
+- **Ahorro de espacio 🗜️:** las facturas se optimizan en el celular antes de subirse.
+  - **Fotos:** se ajustan a la resolución necesaria para leerlas y se guardan en WebP o JPEG, el que pese menos. Una foto de 12 MP pasa de unos 5 MB a unos 350 KB. También se borran los metadatos, incluida la ubicación GPS.
+  - **PDF:** se re-guardan optimizados. Si son escaneados, se rearman con las páginas comprimidas. Los PDF con texto real no se tocan.
+  - En **Ajustes → Almacenamiento** se ve cuánto espacio queda del plan gratuito (1 GB) y se puede elegir el nivel de compresión: Calidad, Equilibrado o Ahorro. El botón **"Optimizar facturas ya guardadas"** reduce las que se subieron antes.
 - Categorías por defecto: Alimentación, Transporte, Servicios, Salud, Hogar, Entretenimiento y Otros.
 - Resumen mensual: total, variación frente al mes anterior, promedio diario, gastos sin factura, gráfico por categoría y tendencia de 6 meses.
 - Lista con búsqueda y filtros por mes y categoría.
@@ -60,6 +64,7 @@ css/styles.css        Estilos responsivos (claro/oscuro)
 js/config.js          URL y llave pública de Supabase, categorías por defecto
 js/app.js             Lógica de la app
 js/lector.js          Lectura automática de facturas (QR DIAN, PDF, OCR)
+js/compresor.js       Optimización de fotos y PDF antes de subirlos
 sw.js                 Service worker (PWA)
 manifest.webmanifest  Datos de instalación de la PWA
 supabase/schema.sql   Tablas, reglas de seguridad y bucket de facturas

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Pruebas compresor</title>
+<style>body{font:14px system-ui;padding:12px;background:#fff;color:#111}.ok{color:green}.ko{color:#c00}
+.cmp{display:flex;gap:8px;margin:6px 0 16px}.cmp figure{margin:0;flex:1}.cmp img{width:100%;border:1px solid #ccc;image-rendering:auto}
+figcaption{font-size:12px;color:#555}</style>
+</head><body>
+<h3>Pruebas del compresor de facturas</h3>
+<p>Comprime facturas de ejemplo y verifica que el lector siga extrayendo los mismos datos (legibilidad).</p>
+<div id="out"></div>
+<script src="../js/lector.js"></script>
+<script src="../js/compresor.js"></script>
+<script>
+const out = document.getElementById('out');
+const log = (h) => out.insertAdjacentHTML('beforeend', h);
+const F = (b) => Compresor.formatoBytes(b);
+const resultados = [];
+
+/** Factura "fotografiada": fondo con textura/ruido (como una foto real) + texto. */
+function facturaFoto(w, h) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const c = cv.getContext('2d');
+  const g = c.createLinearGradient(0, 0, w, h); g.addColorStop(0, '#e9e4da'); g.addColorStop(1, '#cfc8bb');
+  c.fillStyle = g; c.fillRect(0, 0, w, h);
+  // "papel" de la factura
+  const px = w * 0.18, py = h * 0.06, pw = w * 0.64, ph = h * 0.88;
+  c.fillStyle = '#fbfaf6'; c.fillRect(px, py, pw, ph);
+  // ruido de sensor
+  const img = c.getImageData(0, 0, w, h); const d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 26; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  c.putImageData(img, 0, 0);
+  c.fillStyle = '#1a1a1a';
+  const s = pw / 640; let y = py + 90 * s;
+  [['bold', 40, 'SUPERMERCADO LA COSECHA'], ['', 24, 'NIT 900.456.789-1'], ['', 24, 'Factura de venta No. LC-20931'], ['', 24, 'Fecha: 18/11/2026 19:04'], ['', 24, ' '],
+   ['', 24, 'ARROZ DIANA 1KG            4.990'], ['', 24, 'ACEITE GIRASOL 900ML      12.350'], ['', 24, 'CAFE SELLO ROJO 500G      18.900'], ['', 24, 'SUBTOTAL                  36.240'],
+   ['bold', 32, 'TOTAL A PAGAR   $ 36.240'], ['', 24, 'Pago: Tarjeta debito']]
+    .forEach(([b, t, txt]) => { c.font = `${b} ${t * s}px Arial`; c.fillText(txt, px + 40 * s, y); y += t * s * 2; });
+  return cv;
+}
+const blobDe = (cv, tipo, q) => new Promise((r) => cv.toBlob(r, tipo, q));
+const dims = async (f) => { const b = await createImageBitmap(f); const r = `${b.width}×${b.height}`; b.close?.(); return r; };
+
+async function prueba(nombre, file, { esperarCambio = true, verificarLectura = true, minAhorro = 0.5 } = {}) {
+  const t0 = performance.now();
+  const c = await Compresor.comprimir(file, 'equilibrado');
+  const ms = Math.round(performance.now() - t0);
+  const ahorro = 1 - c.despues / c.antes;
+  const fallos = [];
+  if (esperarCambio && !c.cambiado) fallos.push('no se comprimió');
+  if (!esperarCambio && c.cambiado) fallos.push('no debía cambiar');
+  if (esperarCambio && ahorro < minAhorro) fallos.push(`ahorro bajo (${Math.round(ahorro * 100)}%)`);
+  let lect = '';
+  if (verificarLectura && c.cambiado) {
+    const a = await LectorFacturas.analizar(file, { progreso: () => {} });
+    const b = await LectorFacturas.analizar(c.file, { progreso: () => {} });
+    for (const k of ['monto', 'fecha', 'numero', 'nit']) if (a[k] !== b[k]) fallos.push(`lectura distinta en ${k}: ${a[k]} vs ${b[k]}`);
+    lect = ` · lectura igual: monto ${b.monto}, fecha ${b.fecha}, n.º ${b.numero}`;
+  }
+  const extra = file.type.startsWith('image/') ? ` · ${await dims(file)} → ${await dims(c.file)}` : '';
+  resultados.push({ nombre, ok: !fallos.length, fallos, antes: c.antes, despues: c.despues, tipo: c.file.type, ms });
+  log(`<p class="${fallos.length ? 'ko' : 'ok'}"><b>${fallos.length ? '✗' : '✓'} ${nombre}</b>: ${F(c.antes)} → ${F(c.despues)} (−${Math.max(0, Math.round(ahorro * 100))}%, ${c.file.type}, ${ms} ms)${extra}${lect} ${fallos.join(' | ')}</p>`);
+  return c;
+}
+
+(async () => {
+  try {
+    // 1) Foto de celular 12 MP (4032×3024) JPEG alta calidad
+    const foto = new File([await blobDe(facturaFoto(3024, 4032), 'image/jpeg', 0.95)], 'IMG_1234.jpg', { type: 'image/jpeg' });
+    const c1 = await prueba('Foto 12 MP de celular', foto, { minAhorro: 0.7 });
+    // Comparación visual: recorte del texto antes / después
+    const recorte = async (f) => { const b = await createImageBitmap(f); const cv = document.createElement('canvas'); cv.width = 700; cv.height = 360;
+      const k = b.width / 3024; cv.getContext('2d').drawImage(b, 620 * k, 1180 * k, 1400 * k, 720 * k, 0, 0, 700, 360); return cv.toDataURL('image/png'); };
+    log(`<div class="cmp"><figure><img src="${await recorte(foto)}"><figcaption>Original ${F(foto.size)}</figcaption></figure><figure><img id="img-desp" src="${await recorte(c1.file)}"><figcaption>Optimizada ${F(c1.file.size)}</figcaption></figure></div>`);
+
+    // 2) Captura de pantalla PNG de iPhone
+    const png = new File([await blobDe(facturaFoto(1170, 2532), 'image/png')], 'captura.png', { type: 'image/png' });
+    await prueba('Captura de pantalla PNG', png, { minAhorro: 0.5 });
+
+    // 3) PDF escaneado (solo imagen)
+    await LectorFacturas.cargar('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js');
+    const doc = await PDFLib.PDFDocument.create();
+    const jpg = await doc.embedJpg(await (await blobDe(facturaFoto(2550, 3300), 'image/jpeg', 0.95)).arrayBuffer());
+    doc.addPage([612, 792]).drawImage(jpg, { x: 0, y: 0, width: 612, height: 792 });
+    const escaneo = new File([await doc.save()], 'escaneo.pdf', { type: 'application/pdf' });
+    await prueba('PDF escaneado', escaneo, { minAhorro: 0.4 });
+
+    // 4) PDF con texto (factura electrónica): no se debe rasterizar ni empeorar
+    const t = await PDFLib.PDFDocument.create(); const font = await t.embedFont(PDFLib.StandardFonts.Helvetica);
+    const pg = t.addPage([612, 792]); ['CLARO COLOMBIA S.A.', 'Factura No. CL-998877', 'Total a pagar $ 114.121'].forEach((s, i) => pg.drawText(s, { x: 50, y: 740 - i * 20, size: 14, font }));
+    const textoPdf = new File([await t.save()], 'electronica.pdf', { type: 'application/pdf' });
+    await prueba('PDF con texto pequeño (se conserva)', textoPdf, { esperarCambio: false });
+
+    // 5) Foto pequeña ya optimizada (se conserva)
+    const peque = new File([await blobDe(facturaFoto(600, 800), 'image/jpeg', 0.6)], 'peque.jpg', { type: 'image/jpeg' });
+    await prueba('Foto pequeña (se conserva)', peque, { esperarCambio: false });
+
+    window.__RES = { ok: resultados.filter((r) => r.ok).length, total: resultados.length, resultados };
+    log(`<h3>${window.__RES.ok}/${window.__RES.total} OK</h3>`);
+  } catch (e) { window.__RES = { error: String(e.stack || e) }; log(`<p class="ko">ERROR ${e}</p>`); }
+})();
+</script></body></html>

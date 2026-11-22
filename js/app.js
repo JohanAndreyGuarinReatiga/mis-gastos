@@ -440,11 +440,11 @@
         const mini = S.miniaturas.get(a.src);
         return `<div class="adj" data-gal="${i}" ${mini ? '' : `data-pdf="${esc(a.src || '')}"`} title="${esc(a.nombre || 'PDF')}">
           ${mini ? `<img class="adj-thumb" src="${mini}" alt="">` : `<div class="adj-pdf"><b>📄</b>${esc(a.nombre || 'PDF')}</div>`}
-          <span class="adj-badge">PDF</span>${del}</div>`;
+          <span class="adj-badge">PDF</span>${a.nota ? `<span class="adj-ahorro">${esc(a.nota)}</span>` : ""}${del}</div>`;
       }
       const verImg = a.src && !/hei[cf]/i.test(a.tipo || '');
       return `<div class="adj" data-gal="${i}" title="${esc(a.nombre || 'Imagen')}">
-        ${verImg ? `<img src="${esc(a.src)}" alt="${esc(a.nombre || 'Factura')}" loading="lazy">` : `<div class="adj-pdf"><b>🖼️</b>${esc(a.nombre || 'Imagen')}</div>`}${del}</div>`;
+        ${verImg ? `<img src="${esc(a.src)}" alt="${esc(a.nombre || 'Factura')}" loading="lazy">` : `<div class="adj-pdf"><b>🖼️</b>${esc(a.nombre || 'Imagen')}</div>`}${a.nota ? `<span class="adj-ahorro">${esc(a.nota)}</span>` : ''}${del}</div>`;
     }).join('');
     miniaturasPDF(grid);
   }
@@ -869,7 +869,7 @@
     if (!E.leyendo && ($('#auto-banner').hidden || !(vivos.length || E.nuevos.length))) banner(null);
     pintarGaleria('form-adjuntos', [
       ...vivos.map((a) => ({ key: `e${a.id}`, nombre: a.nombre, tipo: a.tipo, src: urls[a.ruta] })),
-      ...E.nuevos.map((n) => ({ key: n.key, nombre: n.file.name, tipo: n.file.type, src: n.preview })),
+      ...E.nuevos.map((n) => ({ key: n.key, nombre: n.file.name, tipo: n.file.type, src: n.preview, nota: n.nota })),
     ]);
   }
 
@@ -887,17 +887,30 @@
     renderAdjForm();
   });
 
+  const presetCompresion = () => store.get('compresion') || 'equilibrado';
+
   async function agregarArchivos(files) {
-    const antes = S.edit.nuevos.length;
+    const E = S.edit;
+    const antes = E.nuevos.length;
+    let totalAntes = 0, totalDespues = 0;
     for (const f0 of files) {
       if (!(f0.type.startsWith('image/') || esPDF(f0.type))) { toast(`${f0.name}: solo imágenes o PDF`, true); continue; }
-      const f = await comprimir(f0);
-      if (f.size > MAX_FILE) { toast(`${f.name} supera 10 MB`, true); continue; }
-      // Para leer usamos el original (mejor resolución); para subir, el comprimido.
+      if (!E.leyendo) banner(`Optimizando ${esPDF(f0.type) ? 'PDF' : 'foto'}…`, { cargando: true });
+      const c = window.Compresor ? await Compresor.comprimir(f0, presetCompresion()) : { file: f0, antes: f0.size, despues: f0.size, cambiado: false };
+      if (S.edit !== E) return;
+      const f = c.file;
+      if (f.size > MAX_FILE) { toast(`${f.name} pesa ${Compresor.formatoBytes(f.size)} incluso optimizado; el máximo es 10 MB`, true); continue; }
+      totalAntes += c.antes; totalDespues += c.despues;
+      // Para leer usamos el original (mejor resolución); para subir, el optimizado.
       // preview: URL local para miniatura y visor (imágenes y PDF).
       // hash: huella del archivo original para reconocer la misma factura subida dos veces.
-      S.edit.nuevos.push({ key: `n${Math.random().toString(36).slice(2)}`, file: f, original: f0, preview: URL.createObjectURL(f), hash: await sha256(f0) });
+      E.nuevos.push({
+        key: `n${Math.random().toString(36).slice(2)}`, file: f, original: f0, preview: URL.createObjectURL(f), hash: await sha256(f0),
+        nota: c.cambiado ? `−${Math.round((1 - c.despues / c.antes) * 100)}%` : '',
+      });
     }
+    if (!E.leyendo) banner(null);
+    if (totalDespues < totalAntes) toast(`Optimizado: ${Compresor.formatoBytes(totalAntes)} → ${Compresor.formatoBytes(totalDespues)}`);
     renderAdjForm();
     comprobarRepetidoEnForm();
     const agregado = S.edit.nuevos.length > antes ? S.edit.nuevos[S.edit.nuevos.length - 1] : null;
@@ -908,23 +921,6 @@
     await agregarArchivos([...e.target.files]);
     e.target.value = '';
   }));
-
-  // Reduce fotos grandes (las de celular pesan 3–8 MB) a ~2000 px JPEG.
-  async function comprimir(file) {
-    if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 500 * 1024) return file;
-    try {
-      const bmp = await createImageBitmap(file);
-      const max = 2000;
-      const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
-      const cv = document.createElement('canvas');
-      cv.width = Math.round(bmp.width * k);
-      cv.height = Math.round(bmp.height * k);
-      cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
-      const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.82));
-      if (!blob || blob.size >= file.size) return file;
-      return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
-    } catch { return file; }
-  }
 
   const extension = (f) => (esPDF(f.type) ? 'pdf' : (f.type.split('/')[1] || 'bin').replace('jpeg', 'jpg'));
 
@@ -982,7 +978,7 @@
 
       // Subir nuevas facturas
       for (const n of [...E.nuevos]) {
-        const ruta = `${S.user.id}/${id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension(n.file)}`;
+        const ruta = `${S.user.id}/${id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-o.${extension(n.file)}`;
         const up = await sb.storage.from(CFG.BUCKET).upload(ruta, n.file, { contentType: n.file.type, upsert: false });
         if (up.error) throw up.error;
         const ins = await sb.from('adjuntos').insert({ gasto_id: id, ruta, nombre: n.file.name, tipo: n.file.type, tamano: n.file.size, ...(S.v3 && n.hash ? { hash: n.hash } : {}) });
@@ -1027,7 +1023,80 @@
         <span style="width:14px;height:14px;border-radius:50%;background:${esc(c.color)}"></span>
       </li>`).join('');
     if (!$('#exp-mes').value) $('#exp-mes').value = ym(new Date());
+    renderAlmacenamiento();
   }
+
+  // ---------- Almacenamiento y compresión ----------
+  const LIMITE_GRATIS = 1024 ** 3; // 1 GB de almacenamiento en el plan gratuito de Supabase
+  const UMBRAL_OPT = 150 * 1024;
+  // "-o" en la ruta = el archivo ya pasó por el compresor (al subirlo o al optimizar); no se repite.
+  const porOptimizar = (a) => !/-o\.\w+$/.test(a.ruta) && (!a.tamano || a.tamano > UMBRAL_OPT);
+
+  function renderAlmacenamiento() {
+    const adj = S.gastos.flatMap((g) => g.adjuntos || []);
+    const total = adj.reduce((a, x) => a + (Number(x.tamano) || 0), 0);
+    const pct = Math.min(100, (total / LIMITE_GRATIS) * 100);
+    $('#uso-relleno').style.width = `${Math.max(pct, total ? 0.8 : 0)}%`;
+    $('.uso-barra').classList.toggle('alto', pct > 80);
+    $('#uso-usado').textContent = `${Compresor.formatoBytes(total)} de 1 GB`;
+    const prom = adj.length ? total / adj.length : 0;
+    const restantes = prom ? Math.floor((LIMITE_GRATIS - total) / prom) : null;
+    $('#uso-detalle').textContent = `${adj.length} factura${adj.length === 1 ? '' : 's'}${prom ? ` · promedio ${Compresor.formatoBytes(Math.round(prom))} · caben ~${fmtNum.format(restantes)} más` : ''}`;
+    const actual = presetCompresion();
+    $$('#seg-compresion button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.preset === actual)));
+    const desc = {
+      calidad: 'Fotos hasta 3200 px. Archivos más pesados; útil si fotografías facturas de letra muy pequeña.',
+      equilibrado: 'Recomendado. Fotos hasta 2400 px: el texto se lee perfecto y cada foto queda en unos 200–500 KB.',
+      ahorro: 'Fotos hasta 1800 px. Ocupa menos espacio; sigue siendo legible para tiquetes y facturas normales.',
+    };
+    $('#compresion-desc').textContent = desc[actual];
+    const candidatas = adj.filter(porOptimizar).length;
+    $('#btn-optimizar').disabled = !candidatas;
+    $('#btn-optimizar').textContent = candidatas ? `✨ Optimizar facturas ya guardadas (${candidatas})` : '✓ Todas las facturas están optimizadas';
+  }
+
+  $('#seg-compresion').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-preset]');
+    if (!b) return;
+    store.set('compresion', b.dataset.preset);
+    renderAlmacenamiento();
+  });
+
+  $('#btn-optimizar').addEventListener('click', async () => {
+    const tareas = S.gastos.flatMap((g) => (g.adjuntos || []).map((a) => ({ g, a }))).filter(({ a }) => porOptimizar(a));
+    if (!tareas.length) return;
+    if (!confirm(`Se revisarán ${tareas.length} factura(s) guardadas y se reemplazarán por versiones más livianas cuando se ahorre al menos un 15 %.\n\nEl texto sigue siendo legible, pero los archivos originales se sustituyen y no se puede deshacer.\n\n¿Continuar?`)) return;
+    const btn = $('#btn-optimizar');
+    const prog = $('#optimizar-progreso');
+    btn.disabled = true;
+    prog.hidden = false;
+    let ahorro = 0, optimizadas = 0, fallidas = 0, i = 0;
+    for (const { g, a } of tareas) {
+      prog.textContent = `Optimizando ${++i} de ${tareas.length}… (ahorrado: ${Compresor.formatoBytes(ahorro)})`;
+      try {
+        const { data, error } = await sb.storage.from(CFG.BUCKET).download(a.ruta);
+        if (error) throw error;
+        const orig = new File([data], a.nombre || 'factura', { type: a.tipo || data.type });
+        const c = await Compresor.comprimir(orig, presetCompresion());
+        if (c.cambiado && c.despues < c.antes * 0.85) {
+          const ruta = `${S.user.id}/${g.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-o.${extension(c.file)}`;
+          const up = await sb.storage.from(CFG.BUCKET).upload(ruta, c.file, { contentType: c.file.type, upsert: false });
+          if (up.error) throw up.error;
+          const upd = await sb.from('adjuntos').update({ ruta, tipo: c.file.type, tamano: c.file.size, nombre: c.file.name }).eq('id', a.id);
+          if (upd.error) { await sb.storage.from(CFG.BUCKET).remove([ruta]); throw upd.error; }
+          await sb.storage.from(CFG.BUCKET).remove([a.ruta]); // el original solo se borra cuando el nuevo ya quedó registrado
+          ahorro += c.antes - c.despues;
+          optimizadas++;
+        } else if (!a.tamano) {
+          await sb.from('adjuntos').update({ tamano: orig.size }).eq('id', a.id);
+        }
+      } catch (e) { console.error('Optimizar', a.ruta, e); fallidas++; }
+    }
+    try { await cargarGastos(); } catch { /* ignorar */ }
+    renderAlmacenamiento();
+    prog.textContent = `Listo: ${optimizadas} factura(s) optimizada(s), ${Compresor.formatoBytes(ahorro)} liberados${fallidas ? ` · ${fallidas} con error` : ''}.`;
+    toast(`Liberaste ${Compresor.formatoBytes(ahorro)}`);
+  });
 
   $('#lista-cats').addEventListener('click', (e) => {
     const li = e.target.closest('[data-cat-id]');
