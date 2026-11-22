@@ -123,6 +123,28 @@
           <p class="muted small" id="optimizar-progreso" hidden></p>
         </div>
         <div class="card">
+          <h3>Respaldo y limpieza de la nube</h3>
+          <p class="muted small">Cuando la nube se acerca al límite gratuito, la app descarga en tu equipo un ZIP (Excel + facturas) con los meses más antiguos y, después de que confirmes, los borra de la nube para dejar espacio a los nuevos.</p>
+          <ul class="list ajustes-lista">
+            <li class="fila-ajuste"><span>Archivado automático</span><label class="check"><input type="checkbox" id="arch-auto"></label></li>
+            <li class="fila-ajuste"><span>Proponer al llegar a</span>
+              <select id="arch-umbral" class="select-corto" aria-label="Umbral de almacenamiento">
+                <option value="70">70 %</option><option value="80">80 %</option><option value="85">85 %</option><option value="90">90 %</option><option value="95">95 %</option>
+              </select></li>
+            <li class="fila-ajuste"><span>Borrar también los gastos<br><small class="muted">si está apagado, solo se borran las facturas</small></span><label class="check"><input type="checkbox" id="arch-borrar"></label></li>
+          </ul>
+          <p class="muted small" id="arch-estado"></p>
+          <span class="field-label">Archivar ahora</span>
+          <div class="row" style="margin-top:8px">
+            <input type="month" id="arch-hasta" aria-label="Archivar hasta el mes">
+            <button class="btn" id="arch-ahora" type="button">🗄️ Archivar hasta este mes</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Historial de descargas</h3></div>
+          <ul class="list" id="lista-historial"></ul>
+        </div>
+        <div class="card">
           <h3>Exportar</h3>
           <p class="muted">Descarga tus gastos para Excel o tu contador.</p>
           <div class="row">
@@ -249,6 +271,18 @@
         <button class="btn" type="button" data-close>Revisar</button>
         <button class="btn btn-danger" type="button" id="rep-guardar">Guardar de todos modos</button>
       </footer>
+    </div>
+  </dialog>
+
+  <!-- ============ MODAL: RESPALDO Y LIMPIEZA ============ -->
+  <dialog id="dlg-archivo" class="sheet sheet-sm">
+    <div>
+      <header class="sheet-head">
+        <h3>Liberar espacio en la nube</h3>
+        <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="sheet-body" id="archivo-body"></div>
+      <footer class="sheet-foot" id="archivo-pie"></footer>
     </div>
   </dialog>
 

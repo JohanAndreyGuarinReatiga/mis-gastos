@@ -103,9 +103,11 @@
     try {
       await cargarCategorias();
       await cargarGastos();
+      await cargarHistorial();
     } catch (e) { fallo(e, 'No se pudieron cargar los datos'); }
     loading(false);
     ruta();
+    setTimeout(chequearLimite, 1200); // ¿la nube está por llenarse? propone respaldo + limpieza
   }
 
   $('#logout').addEventListener('click', async () => {
@@ -258,7 +260,7 @@
       <div class="item" data-id="${g.id}">
         <span class="item-ico" style="background:${esc(c.color)}22">${esc(c.icono)}</span>
         <div class="item-main"><div class="item-title">${esc(titulo)}</div><div class="item-sub">${S.repetidos?.has(g.id) ? '<span class="badge-rep">⚠️ repetido</span> ' : ''}${esc(sub)}</div></div>
-        <div class="item-amount">${fmt(g.monto)}<small>${nAdj ? `📎 ${nAdj}` : 'sin factura'}</small></div>
+        <div class="item-amount">${fmt(g.monto)}<small>${nAdj ? `📎 ${nAdj}` : g.archivado_en ? '📦 archivada' : 'sin factura'}</small></div>
       </div>
       ${items.length ? `<details class="prod-toggle"><summary>${items.length} producto${items.length === 1 ? '' : 's'}</summary>${prodsHTML(items)}</details>` : ''}
     </li>`;
@@ -286,7 +288,7 @@
     const esMesActual = ym(hoy) === ym(S.mes);
     const dias = esMesActual ? hoy.getDate() : new Date(S.mes.getFullYear(), S.mes.getMonth() + 1, 0).getDate();
     $('#st-prom').textContent = fmt(total / dias);
-    $('#st-sinfac').textContent = actual.filter((g) => !g.adjuntos?.length).length;
+    $('#st-sinfac').textContent = actual.filter((g) => !g.adjuntos?.length && !g.archivado_en).length;
 
     // Por categoría
     const porCat = new Map();
@@ -408,6 +410,7 @@
         ${g.numero_factura ? `<dt>N.º factura</dt><dd>${esc(g.numero_factura)}</dd>` : ''}
         ${g.nit ? `<dt>NIT</dt><dd>${esc(g.nit)}</dd>` : ''}
         ${g.metodo_pago ? `<dt>Pago</dt><dd>${esc(g.metodo_pago)}</dd>` : ''}
+        ${g.archivado_en ? `<dt>Factura</dt><dd>📦 En tu respaldo local<br><small>${esc(g.archivo_respaldo || '')} · ${esc(new Date(g.archivado_en).toLocaleDateString('es-CO'))}</small></dd>` : ''}
         ${g.descripcion ? `<dt>Descripción</dt><dd>${esc(g.descripcion)}</dd>` : ''}
       </dl>
       ${itemsDe(g).length ? `<details class="prods det-prods"><summary><span>🛒 Productos</span><span class="muted">${itemsDe(g).length}</span></summary><div class="prods-body">${prodsHTML(itemsDe(g))}</div></details>` : ''}
@@ -1001,6 +1004,7 @@
       await cargarGastos();
       $('#dlg-gasto').close();
       toast(eraEdicion ? 'Gasto actualizado' : 'Gasto guardado');
+      setTimeout(chequearLimite, 800);
       refrescar();
     } catch (err) {
       if (/items/.test(err?.message || '') && /PGRST204|42703/.test(err?.code || '')) {
@@ -1024,6 +1028,8 @@
       </li>`).join('');
     if (!$('#exp-mes').value) $('#exp-mes').value = ym(new Date());
     renderAlmacenamiento();
+    renderArchivoAjustes();
+    renderHistorial();
   }
 
   // ---------- Almacenamiento y compresión ----------
@@ -1224,6 +1230,54 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
 
+  const cargarXLSX = () => LectorFacturas.cargar('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+  const cargarZip = () => LectorFacturas.cargar('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+  const rangoDe = (lista) => ({ desde: lista[0]?.fecha || null, hasta: lista[lista.length - 1]?.fecha || null });
+  const nFacturas = (lista) => lista.reduce((a, g) => a + (g.adjuntos?.length || 0), 0);
+
+  // ---------- Historial de descargas ----------
+  S.v4 = true;
+  S.historial = [];
+  async function cargarHistorial() {
+    const { data, error } = await sb.from('exportaciones').select('*').order('created_at', { ascending: false }).limit(40);
+    if (error) { S.v4 = false; S.historial = []; return; }
+    S.v4 = true;
+    S.historial = data;
+  }
+
+  /** Guarda la descarga en el historial (si la migración 004 está aplicada). */
+  async function registrarExport(r) {
+    if (!S.v4) return;
+    const fila = { tipo: r.tipo, periodo: r.periodo, ...rangoDe(r.lista || []), gastos: r.lista?.length || 0, facturas: r.facturas ?? nFacturas(r.lista || []),
+      tamano: r.tamano ?? null, liberado: r.liberado ?? null, nombre: r.nombre };
+    const { data, error } = await sb.from('exportaciones').insert(fila).select().single();
+    if (error) { console.warn('Historial', error); if (/exportaciones/.test(error.message || '')) S.v4 = false; return; }
+    S.historial.unshift(data);
+    if (!$('#view-ajustes').hidden) renderHistorial();
+  }
+
+  const ICONO_EXPORT = { xlsx: ['📊', 'Excel'], csv: ['🧾', 'CSV'], zip: ['📦', 'Excel + facturas'], archivo: ['🗄️', 'Respaldo y limpieza'] };
+  function renderHistorial() {
+    const ul = $('#lista-historial');
+    if (!S.v4) {
+      ul.innerHTML = '<li class="empty">Para guardar el historial, ejecuta <b>supabase/migraciones/004_historial_y_archivo.sql</b> en Supabase.</li>';
+      return;
+    }
+    if (!S.historial.length) { ul.innerHTML = '<li class="empty">Aún no has descargado nada.</li>'; return; }
+    ul.innerHTML = S.historial.map((h) => {
+      const [ico, tipo] = ICONO_EXPORT[h.tipo] || ['⬇', h.tipo];
+      const cuando = new Date(h.created_at).toLocaleString('es-CO', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+      const det = [h.periodo, `${h.gastos} gasto${h.gastos === 1 ? '' : 's'}`, h.facturas ? `${h.facturas} factura${h.facturas === 1 ? '' : 's'}` : null, h.tamano ? Compresor.formatoBytes(h.tamano) : null]
+        .filter(Boolean).join(' · ');
+      return `<li class="item hist">
+        <span class="item-ico" style="background:var(--fill)">${ico}</span>
+        <div class="item-main"><div class="item-title">${esc(tipo)}${h.liberado ? ` <span class="hist-lib">−${esc(Compresor.formatoBytes(h.liberado))} en la nube</span>` : ''}</div>
+          <div class="item-sub">${esc(det)}</div><div class="item-sub">${esc(cuando)}${h.nombre ? ` · ${esc(h.nombre)}` : ''}</div></div>
+      </li>`;
+    }).join('');
+  }
+
+  // ---------- Exportaciones manuales ----------
   $('#exp-csv').addEventListener('click', async () => {
     const { nombre, lista } = gastosExport();
     if (!lista.length) return toast('No hay gastos para exportar', true);
@@ -1238,13 +1292,12 @@
         g.monto, textoProductos(g), g.numero_factura || '', g.nit || '', ...enlaces(g).map((e) => e.url)]);
       // Separador ";" para que Excel en español (Colombia) lo abra en columnas.
       const csv = [cab, ...filas].map((f) => f.map(celda).join(';')).join('\r\n');
-      descargar(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), `${nombre}.csv`);
+      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+      descargar(blob, `${nombre}.csv`);
+      registrarExport({ tipo: 'csv', periodo: nombre.replace('gastos_', ''), lista, tamano: blob.size, nombre: `${nombre}.csv` });
     } catch (err) { fallo(err, 'No se pudo exportar'); }
     loading(false);
   });
-
-  const cargarXLSX = () => LectorFacturas.cargar('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
-  const cargarZip = () => LectorFacturas.cargar('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
 
   $('#exp-xlsx').addEventListener('click', async () => {
     const { nombre, lista } = gastosExport();
@@ -1253,10 +1306,51 @@
     try {
       await cargarXLSX();
       const wb = construirLibro(lista, await enlacesTemporales(lista));
-      XLSX.writeFile(wb, `${nombre}.xlsx`);
+      const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      descargar(blob, `${nombre}.xlsx`);
+      registrarExport({ tipo: 'xlsx', periodo: nombre.replace('gastos_', ''), lista, tamano: blob.size, nombre: `${nombre}.xlsx` });
     } catch (err) { fallo(err, 'No se pudo exportar'); }
     loading(false);
   });
+
+  /**
+   * Arma un ZIP con el Excel y las facturas de `lista`.
+   * @returns {{ blob, incluidos: Map<adjuntoId, rutaEnZip>, fallidos: number }}
+   */
+  async function generarZip(lista, nombre, progreso, notaExtra = []) {
+    await Promise.all([cargarXLSX(), cargarZip()]);
+    const zip = new JSZip();
+    const tareas = lista.flatMap((g) => (g.adjuntos || []).map((a, j) => ({ g, a, ruta: rutaEnZip(g, a, j) })));
+    const fallidos = [];
+    let hechos = 0;
+    const cola = [...tareas];
+    await Promise.all(Array.from({ length: Math.min(4, cola.length) }, async () => {
+      while (cola.length) {
+        const t = cola.shift();
+        const { data, error } = await sb.storage.from(CFG.BUCKET).download(t.a.ruta);
+        if (error || !data) fallidos.push(t); else zip.file(t.ruta, data);
+        progreso(`Descargando facturas… ${++hechos} de ${tareas.length}`);
+      }
+    }));
+    const incluidos = new Map(tareas.filter((t) => !fallidos.includes(t)).map((t) => [t.a.id, t.ruta]));
+    const wb = construirLibro(lista, (g) => (g.adjuntos || []).filter((a) => incluidos.has(a.id))
+      .map((a) => ({ texto: incluidos.get(a.id).split('/').pop(), url: incluidos.get(a.id) })));
+    zip.file(`${nombre}.xlsx`, XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+    zip.file('LEEME.txt', [
+      'Exportación de Mis Gastos',
+      `Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Gastos: ${lista.length} · Total: ${fmt(suma(lista))} · Facturas: ${incluidos.size}`,
+      ...notaExtra,
+      '',
+      '1. Descomprime TODO el .zip en una carpeta (no lo abras desde dentro del .zip).',
+      `2. Abre ${nombre}.xlsx: en la hoja "Gastos", las columnas "Factura N" son vínculos que abren cada archivo.`,
+      '3. La hoja "Productos" tiene el detalle de lo comprado en cada gasto.',
+      ...(fallidos.length ? ['', `Atención: no se pudieron descargar ${fallidos.length} factura(s).`] : []),
+    ].join('\r\n'));
+    progreso('Comprimiendo…');
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    return { blob, incluidos, fallidos: fallidos.length };
+  }
 
   $('#exp-zip').addEventListener('click', async () => {
     const { nombre, lista } = gastosExport();
@@ -1265,45 +1359,212 @@
     btn.disabled = true;
     try {
       progresoExport('Preparando…');
-      await Promise.all([cargarXLSX(), cargarZip()]);
-      const zip = new JSZip();
-      const tareas = lista.flatMap((g) => (g.adjuntos || []).map((a, j) => ({ g, a, ruta: rutaEnZip(g, a, j) })));
-      const fallidos = [];
-      let hechos = 0;
-      // Descarga en paralelo (4 a la vez)
-      const cola = [...tareas];
-      await Promise.all(Array.from({ length: Math.min(4, cola.length) }, async () => {
-        while (cola.length) {
-          const t = cola.shift();
-          const { data, error } = await sb.storage.from(CFG.BUCKET).download(t.a.ruta);
-          if (error || !data) fallidos.push(t); else zip.file(t.ruta, data);
-          progresoExport(`Descargando facturas… ${++hechos} de ${tareas.length}`);
-        }
-      }));
-      const okRutas = new Map(tareas.filter((t) => !fallidos.includes(t)).map((t) => [t.a.id, t.ruta]));
-      const wb = construirLibro(lista, (g) => (g.adjuntos || []).filter((a) => okRutas.has(a.id))
-        .map((a) => ({ texto: okRutas.get(a.id).split('/').pop(), url: okRutas.get(a.id) })));
-      zip.file(`${nombre}.xlsx`, XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
-      zip.file('LEEME.txt', [
-        'Exportación de Mis Gastos',
-        `Generado: ${new Date().toLocaleString('es-CO')}`,
-        `Gastos: ${lista.length} · Total: ${fmt(suma(lista))} · Facturas: ${okRutas.size}`,
-        '',
-        `1. Descomprime TODO el .zip en una carpeta (no lo abras desde dentro del .zip).`,
-        `2. Abre ${nombre}.xlsx: en la hoja "Gastos", las columnas "Factura N" son vínculos que abren cada archivo.`,
-        '3. La hoja "Productos" tiene el detalle de lo comprado en cada gasto.',
-        ...(fallidos.length ? ['', `Atención: no se pudieron descargar ${fallidos.length} factura(s).`] : []),
-      ].join('\r\n'));
-      progresoExport('Comprimiendo…');
-      const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-      descargar(blob, `${nombre}.zip`);
-      progresoExport(fallidos.length ? `Listo, pero ${fallidos.length} factura(s) no se pudieron descargar.` : `Listo: ${lista.length} gastos y ${okRutas.size} facturas.`);
+      const r = await generarZip(lista, nombre, progresoExport);
+      descargar(r.blob, `${nombre}.zip`);
+      registrarExport({ tipo: 'zip', periodo: nombre.replace('gastos_', ''), lista, facturas: r.incluidos.size, tamano: r.blob.size, nombre: `${nombre}.zip` });
+      progresoExport(r.fallidos ? `Listo, pero ${r.fallidos} factura(s) no se pudieron descargar.` : `Listo: ${lista.length} gastos y ${r.incluidos.size} facturas.`);
       setTimeout(() => progresoExport(null), 6000);
     } catch (err) {
       progresoExport(null);
       fallo(err, 'No se pudo exportar');
     }
     btn.disabled = false;
+  });
+
+  // ---------- Archivo: respaldo local + limpieza de la nube ----------
+  const PREF = {
+    get auto() { return store.get('archivoAuto') !== '0'; },
+    get umbral() { return Number(store.get('archivoUmbral')) || 85; },
+    get borrarGastos() { return store.get('archivoBorrarGastos') === '1'; },
+  };
+  const MAX_LOTE = 200 * 1024 * 1024; // tope por ZIP para no agotar la memoria del celular
+  const usoNube = () => S.gastos.reduce((a, g) => a + (g.adjuntos || []).reduce((b, x) => b + (Number(x.tamano) || 0), 0), 0);
+  const pesoGasto = (g) => (g.adjuntos || []).reduce((b, x) => b + (Number(x.tamano) || 0), 0);
+  const nombreMesCorto = (k) => { const [y, m] = k.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('es-CO', { month: 'short', year: 'numeric' }); };
+
+  /**
+   * Elige los meses más antiguos con facturas en la nube.
+   * hasta: 'AAAA-MM' (manual) o null (automático: liberar hasta dejar el uso en 60 %).
+   * Nunca incluye el mes actual ni el anterior en modo automático.
+   */
+  function planArchivo(hasta = null) {
+    const porMes = new Map();
+    for (const g of S.gastos) {
+      const k = g.fecha.slice(0, 7);
+      if (!porMes.has(k)) porMes.set(k, []);
+      porMes.get(k).push(g);
+    }
+    const limiteAuto = ym(sumarMeses(primeroDeMes(new Date()), -1));
+    const meses = [...porMes.keys()].sort().filter((k) => (hasta ? k <= hasta : k < limiteAuto))
+      .filter((k) => porMes.get(k).some((g) => g.adjuntos?.length));
+    const objetivo = hasta ? Infinity : Math.max(0, usoNube() - LIMITE_GRATIS * 0.6);
+    const elegidos = [];
+    let bytes = 0;
+    for (const k of meses) {
+      const pesoMes = porMes.get(k).reduce((a, g) => a + pesoGasto(g), 0);
+      if (elegidos.length && bytes + pesoMes > MAX_LOTE) break;
+      elegidos.push(k);
+      bytes += pesoMes;
+      if (bytes >= objetivo) break;
+    }
+    const lista = elegidos.flatMap((k) => porMes.get(k)).sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id);
+    const periodo = elegidos.length ? (elegidos.length === 1 ? elegidos[0] : `${elegidos[0]} a ${elegidos[elegidos.length - 1]}`) : '';
+    return { meses: elegidos, lista, bytes, facturas: nFacturas(lista), periodo, quedan: meses.length - elegidos.length };
+  }
+
+  const A = { paso: null, plan: null, zip: null, nombre: null };
+  function abrirArchivo(plan, motivo) {
+    if (!plan.lista.length || !plan.facturas) { toast('No hay facturas antiguas para archivar', true); return; }
+    if (!S.v4 && !PREF.borrarGastos) { toast("Para archivar, primero ejecuta supabase/migraciones/004_historial_y_archivo.sql en Supabase.", true); return; }
+    Object.assign(A, { paso: 'resumen', plan, motivo, zip: null, nombre: `gastos_archivo_${plan.periodo.replace(/ a /, '_a_')}` });
+    pintarArchivo();
+    if (!$('#dlg-archivo').open) $('#dlg-archivo').showModal();
+  }
+
+  function pintarArchivo(msg = '') {
+    const p = A.plan;
+    const body = $('#archivo-body');
+    const pie = $('#archivo-pie');
+    const rango = p.meses.length === 1 ? nombreMesCorto(p.meses[0]) : `${nombreMesCorto(p.meses[0])} – ${nombreMesCorto(p.meses[p.meses.length - 1])}`;
+    const uso = usoNube();
+    const pct = Math.round((uso / LIMITE_GRATIS) * 100);
+    if (A.paso === 'resumen') {
+      body.innerHTML = `
+        ${A.motivo === 'auto' ? `<div class="aviso-rep"><b>Tu almacenamiento está al ${pct} %</b> (${Compresor.formatoBytes(uso)} de 1 GB). Para que sigan cabiendo facturas nuevas, conviene archivar las más antiguas.</div>` : ''}
+        <dl class="det-rows">
+          <dt>Periodo</dt><dd>${esc(rango)}</dd>
+          <dt>Gastos</dt><dd>${p.lista.length}</dd>
+          <dt>Facturas</dt><dd>${p.facturas}</dd>
+          <dt>Espacio a liberar</dt><dd>${Compresor.formatoBytes(p.bytes)}</dd>
+        </dl>
+        <ol class="pasos">
+          <li><b>Descarga local:</b> se guardará <i>${esc(A.nombre)}.zip</i> con el Excel y todas esas facturas.</li>
+          <li><b>Confirmas</b> que el archivo quedó en tu equipo o celular.</li>
+          <li><b>Limpieza de la nube:</b> ${PREF.borrarGastos ? 'se borran esos gastos y sus facturas' : 'se borran las facturas; los gastos se conservan marcados como "📦 archivada"'}.</li>
+        </ol>
+        ${p.quedan ? `<p class="muted small">Quedan ${p.quedan} mes(es) más antiguos; si aún falta espacio, la app te propondrá otro lote.</p>` : ''}`;
+      pie.innerHTML = `<button class="btn" type="button" data-arch="despues">${A.motivo === 'auto' ? 'Más tarde' : 'Cancelar'}</button>
+        <button class="btn btn-primary" type="button" data-arch="descargar">Descargar respaldo</button>`;
+    } else if (A.paso === 'trabajando') {
+      body.innerHTML = `<div class="arch-prog"><span class="spinner"></span><p>${esc(msg || 'Preparando…')}</p><p class="muted small">No cierres la app.</p></div>`;
+      pie.innerHTML = '';
+    } else if (A.paso === 'confirmar') {
+      body.innerHTML = `
+        <div class="arch-ok">⬇️</div>
+        <p><b>Se descargó ${esc(A.nombre)}.zip</b> (${Compresor.formatoBytes(A.zip.blob.size)}) con ${A.zip.incluidos.size} factura(s).</p>
+        ${A.zip.fallidos ? `<div class="aviso-rep">${A.zip.fallidos} factura(s) no se pudieron descargar y <b>no se borrarán</b> de la nube.</div>` : ''}
+        <p class="muted">Revisa que el archivo esté en tu carpeta de <b>Descargas</b> (o en <b>Archivos</b> en iPhone). Cuando confirmes, se liberará el espacio en la nube. <b>Esto no se puede deshacer.</b></p>`;
+      pie.innerHTML = `<button class="btn" type="button" data-arch="otra-vez">Descargar de nuevo</button>
+        <button class="btn btn-danger" type="button" data-arch="liberar">Ya lo tengo, liberar espacio</button>`;
+    } else if (A.paso === 'listo') {
+      body.innerHTML = `<div class="arch-ok">✅</div><p style="text-align:center"><b>${esc(msg)}</b></p>
+        <p class="muted small" style="text-align:center">El respaldo quedó registrado en el historial de descargas.</p>`;
+      pie.innerHTML = '<button class="btn btn-primary" type="button" data-arch="cerrar">Listo</button>';
+    }
+  }
+
+  $('#archivo-pie').addEventListener('click', async (e) => {
+    const accion = e.target.closest('[data-arch]')?.dataset.arch;
+    if (!accion) return;
+    if (accion === 'despues') {
+      if (A.motivo === 'auto') store.set('archivoPosponer', String(Date.now() + 24 * 3600 * 1000));
+      $('#dlg-archivo').close();
+    } else if (accion === 'cerrar') {
+      $('#dlg-archivo').close();
+    } else if (accion === 'otra-vez') {
+      descargar(A.zip.blob, `${A.nombre}.zip`);
+    } else if (accion === 'descargar') {
+      A.paso = 'trabajando';
+      pintarArchivo();
+      try {
+        A.zip = await generarZip(A.plan.lista, A.nombre, (m) => pintarArchivo(m), [
+          `Respaldo de archivo: estas facturas se borraron de la nube el ${new Date().toLocaleDateString('es-CO')} para liberar espacio.`,
+          'GUARDA ESTE ARCHIVO: es la única copia de esas facturas.',
+        ]);
+        descargar(A.zip.blob, `${A.nombre}.zip`);
+        A.paso = 'confirmar';
+        pintarArchivo();
+      } catch (err) {
+        A.paso = 'resumen';
+        pintarArchivo();
+        fallo(err, 'No se pudo crear el respaldo');
+      }
+    } else if (accion === 'liberar') {
+      A.paso = 'trabajando';
+      pintarArchivo('Liberando espacio en la nube…');
+      try {
+        const liberado = await limpiarNube(A.plan.lista, A.zip.incluidos, A.nombre);
+        await registrarExport({ tipo: 'archivo', periodo: A.plan.periodo, lista: A.plan.lista, facturas: A.zip.incluidos.size,
+          tamano: A.zip.blob.size, liberado, nombre: `${A.nombre}.zip` });
+        A.zip = null; // libera memoria
+        await cargarGastos();
+        refrescar();
+        A.paso = 'listo';
+        pintarArchivo(`Se liberaron ${Compresor.formatoBytes(liberado)} en la nube`);
+      } catch (err) {
+        await cargarGastos().catch(() => {});
+        A.paso = 'confirmar';
+        pintarArchivo();
+        fallo(err, 'La limpieza no terminó (lo ya respaldado se puede reintentar)');
+      }
+    }
+  });
+
+  /** Borra de la nube solo las facturas que quedaron dentro del ZIP. Devuelve los bytes liberados. */
+  async function limpiarNube(lista, incluidos, nombre) {
+    const adj = lista.flatMap((g) => (g.adjuntos || []).filter((a) => incluidos.has(a.id)).map((a) => ({ ...a, gasto_id: g.id })));
+    let liberado = 0;
+    for (let i = 0; i < adj.length; i += 100) {
+      const lote = adj.slice(i, i + 100);
+      const r = await sb.storage.from(CFG.BUCKET).remove(lote.map((a) => a.ruta));
+      if (r.error) throw r.error;
+      const d = await sb.from('adjuntos').delete().in('id', lote.map((a) => a.id));
+      if (d.error) throw d.error;
+      liberado += lote.reduce((s, a) => s + (Number(a.tamano) || 0), 0);
+    }
+    // Gastos cuyo respaldo quedó completo (todas sus facturas en el ZIP)
+    const completos = lista.filter((g) => (g.adjuntos || []).every((a) => incluidos.has(a.id))).map((g) => g.id);
+    const conFactura = lista.filter((g) => (g.adjuntos || []).some((a) => incluidos.has(a.id))).map((g) => g.id);
+    for (let i = 0; i < Math.max(completos.length, conFactura.length); i += 200) {
+      if (PREF.borrarGastos) {
+        const ids = completos.slice(i, i + 200);
+        if (ids.length) { const r = await sb.from('gastos').delete().in('id', ids); if (r.error) throw r.error; }
+      } else {
+        const ids = conFactura.slice(i, i + 200);
+        if (ids.length && S.v4) {
+          const r = await sb.from('gastos').update({ archivado_en: new Date().toISOString(), archivo_respaldo: `${nombre}.zip` }).in('id', ids);
+          if (r.error) throw r.error;
+        }
+      }
+    }
+    return liberado;
+  }
+
+  /** Revisa el uso al abrir la app o al guardar; si pasó el umbral, propone archivar. */
+  function chequearLimite() {
+    if (!PREF.auto || $('#dlg-archivo').open || $('#dlg-gasto').open) return;
+    if (Number(store.get('archivoPosponer') || 0) > Date.now()) return;
+    if (usoNube() < LIMITE_GRATIS * (PREF.umbral / 100)) return;
+    const plan = planArchivo(null);
+    if (plan.facturas) abrirArchivo(plan, 'auto');
+  }
+
+  // Controles de Ajustes
+  function renderArchivoAjustes() {
+    $('#arch-auto').checked = PREF.auto;
+    $('#arch-umbral').value = String(PREF.umbral);
+    $('#arch-borrar').checked = PREF.borrarGastos;
+    if (!$('#arch-hasta').value) $('#arch-hasta').value = ym(sumarMeses(primeroDeMes(new Date()), -2));
+    const archivados = S.gastos.filter((g) => g.archivado_en).length;
+    $('#arch-estado').textContent = `Umbral: ${PREF.umbral} % de 1 GB (${Compresor.formatoBytes(LIMITE_GRATIS * PREF.umbral / 100)}).${archivados ? ` ${archivados} gasto(s) con facturas archivadas.` : ''}`;
+  }
+  $('#arch-auto').addEventListener('change', (e) => { store.set('archivoAuto', e.target.checked ? '1' : '0'); renderArchivoAjustes(); });
+  $('#arch-umbral').addEventListener('change', (e) => { store.set('archivoUmbral', e.target.value); renderArchivoAjustes(); });
+  $('#arch-borrar').addEventListener('change', (e) => { store.set('archivoBorrarGastos', e.target.checked ? '1' : '0'); });
+  $('#arch-ahora').addEventListener('click', () => {
+    const hasta = $('#arch-hasta').value;
+    if (!hasta) return toast('Elige hasta qué mes archivar', true);
+    abrirArchivo(planArchivo(hasta), 'manual');
   });
 
   // ---------- Diálogos ----------

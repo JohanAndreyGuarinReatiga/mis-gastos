@@ -30,6 +30,13 @@ las facturas en foto o PDF de cada uno.
   - **Fotos:** se ajustan a la resolución necesaria para leerlas y se guardan en WebP o JPEG, el que pese menos. Una foto de 12 MP pasa de unos 5 MB a unos 350 KB. También se borran los metadatos, incluida la ubicación GPS.
   - **PDF:** se re-guardan optimizados. Si son escaneados, se rearman con las páginas comprimidas. Los PDF con texto real no se tocan.
   - En **Ajustes → Almacenamiento** se ve cuánto espacio queda del plan gratuito (1 GB) y se puede elegir el nivel de compresión: Calidad, Equilibrado o Ahorro. El botón **"Optimizar facturas ya guardadas"** reduce las que se subieron antes.
+- **Historial de descargas:** cada Excel, CSV o ZIP queda registrado con fecha, periodo, cantidad de gastos y facturas, y peso.
+- **Respaldo y limpieza de la nube 🗄️:** cuando el almacenamiento llega al umbral (85 % del GB gratuito por defecto), la app propone archivar los meses más antiguos.
+  1. Descarga en tu equipo un ZIP con el Excel y las facturas.
+  2. Pide que confirmes que el archivo quedó guardado.
+  3. Borra de la nube **solo las facturas que quedaron dentro del ZIP**.
+
+  Por defecto los gastos se conservan, marcados "📦 archivada" con el nombre del respaldo, así los gráficos y el historial siguen completos; hay una opción para borrarlos también. Nunca toca el mes actual ni el anterior, y se puede archivar a mano hasta un mes elegido.
 - Categorías por defecto: Alimentación, Transporte, Servicios, Salud, Hogar, Entretenimiento y Otros.
 - Resumen mensual: total, variación frente al mes anterior, promedio diario, gastos sin factura, gráfico por categoría y tendencia de 6 meses.
 - Lista con búsqueda y filtros por mes y categoría.
@@ -46,7 +53,7 @@ las facturas en foto o PDF de cada uno.
    y marca **Auto Confirm User**.
 3. **Cerrar registros:** ve a **Authentication → Sign In / Providers** y desactiva **Allow new users to sign up**,
    para que nadie más pueda crear cuenta.
-4. **Actualizaciones de la base de datos:** si tu base se creó con una versión anterior, ejecuta en el SQL Editor los archivos de [`supabase/migraciones/`](supabase/migraciones) que falten. Por ejemplo, `002_productos.sql` agrega la lista de productos, y `003_entretenimiento_y_repetidos.sql` agrega la categoría Entretenimiento y los datos para detectar facturas repetidas.
+4. **Actualizaciones de la base de datos:** si tu base se creó con una versión anterior, ejecuta en el SQL Editor los archivos de [`supabase/migraciones/`](supabase/migraciones) que falten. Por ejemplo, `002_productos.sql` agrega la lista de productos, `003_entretenimiento_y_repetidos.sql` agrega la categoría Entretenimiento y los datos para detectar facturas repetidas, y `004_historial_y_archivo.sql` agrega el historial de descargas y el archivado.
 5. La URL del proyecto y la *publishable key* están en [`js/config.js`](js/config.js).
 
 ## Probar en local

@@ -451,6 +451,23 @@ dialog.visor::backdrop { background: #000; }
   padding: 2px 6px; border-radius: 5px; letter-spacing: .2px;
 }
 
+/* ---------- Respaldo, limpieza e historial ---------- */
+.ajustes-lista { background: var(--surface-2); border-radius: 10px; padding: 0 14px; margin: 4px 0 6px; }
+.fila-ajuste { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 50px; padding: 6px 0; border-bottom: .5px solid var(--border); font-size: 16px; }
+.fila-ajuste:last-child { border-bottom: 0; }
+.fila-ajuste small { font-size: 12px; }
+.fila-ajuste .check { flex: none; }
+.select-corto { width: auto; min-height: 34px; padding: 4px 30px 4px 12px; font-size: 15px; background-color: var(--surface) !important; }
+.pasos { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; font-size: 15px; }
+.arch-prog { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 26px 0; text-align: center; }
+.arch-prog p { margin: 0; }
+.arch-ok { font-size: 46px; text-align: center; }
+.hist { cursor: default; }
+.hist::after { display: none; }
+.hist .item-title { font-size: 16px; }
+.hist-lib { font-size: 12px; font-weight: 600; color: var(--ok); }
+#lista-historial { max-height: 420px; overflow-y: auto; }
+
 /* ---------- Repetidos ---------- */
 .aviso-rep {
   background: color-mix(in srgb, var(--orange) 14%, var(--surface)); border-radius: var(--radius);
