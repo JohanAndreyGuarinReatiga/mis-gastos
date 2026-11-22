@@ -38,6 +38,9 @@ create table if not exists public.adjuntos (
   created_at  timestamptz not null default now()
 );
 
+-- Productos del gasto: [{ "descripcion": "Leche", "cantidad": 1, "valor": 4950 }, ...]
+alter table public.gastos add column if not exists items jsonb not null default '[]'::jsonb;
+
 create index if not exists gastos_user_fecha_idx on public.gastos (user_id, fecha desc);
 create index if not exists gastos_categoria_idx  on public.gastos (categoria_id);
 create index if not exists adjuntos_gasto_idx    on public.adjuntos (gasto_id);

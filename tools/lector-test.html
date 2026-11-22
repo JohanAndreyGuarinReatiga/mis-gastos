@@ -68,6 +68,31 @@ CUFE: 8bb918b19ba22a694f1da11c643b5e9de39adf60311cf179179e9b33381030bcd4c3c3f156
 QRCode: https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=8bb918b19ba22a694f1da11c643b5e9de39adf60311cf179179e9b33381030bcd4c3c3f156c506ed5908f9276f5bd9b4`),
   { monto: 119000, fecha: '2026-11-12', numero: 'SETP990000002', nit: '900.373.115' });
 
+// ---------- 1b. Productos ----------
+function checkItems(nombre, texto, esperado) {
+  const items = L.parsearTexto(texto).items || [];
+  const obt = items.map((i) => `${i.descripcion}|${i.cantidad}|${i.valor}`);
+  const ok = JSON.stringify(obt) === JSON.stringify(esperado);
+  resultados.push({ nombre, ok, fallos: ok ? [] : [`esperado ${JSON.stringify(esperado)}, obtuvo ${JSON.stringify(obt)}`] });
+  log(`<p class="${ok ? 'ok' : 'ko'}"><b>${ok ? '✓' : '✗'} ${nombre}</b> ${ok ? '' : esc2(JSON.stringify(obt))}</p>`);
+}
+const esc2 = (s) => s.replace(/</g, '&lt;');
+checkItems('Productos tiquete', `ALMACENES EXITO S.A.
+NIT 890.900.608-9
+Fecha: 14/11/2026 18:32
+7702001023456 LECHE ENTERA 1L          4.950 A
+2 X PAN TAJADO               15.600 G
+HUEVOS AA X 30   2 x 9.900   19.800
+SUBTOTAL               40.350
+TOTAL IVA               3.420
+TOTAL A PAGAR         $ 43.770`, ['Leche Entera 1L|1|4950', 'Pan Tajado|2|15600', 'Huevos AA X 30|2|19800']);
+checkItems('Productos recibo servicios', `EPM
+Fecha de expedición: 3 de noviembre de 2026
+Energía     98.300
+Acueducto   45.210
+Alcantarillado 44.140
+Valor total a pagar $ 187.650,00`, ['Energía|1|98300', 'Acueducto|1|45210', 'Alcantarillado|1|44140']);
+
 // ---------- 2. Imagen con QR + OCR ----------
 function facturaCanvas({ conQR }) {
   const cv = document.createElement('canvas'); cv.width = 800; cv.height = 1100;

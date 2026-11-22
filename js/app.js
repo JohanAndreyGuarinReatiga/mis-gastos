@@ -180,11 +180,22 @@
     const titulo = g.proveedor || g.descripcion || c.nombre;
     const sub = [c.nombre, g.metodo_pago, conFecha ? fechaCorta(g.fecha) : null].filter(Boolean).join(' · ');
     const nAdj = g.adjuntos?.length || 0;
-    return `<li class="item" data-id="${g.id}">
-      <span class="item-ico" style="background:${esc(c.color)}22">${esc(c.icono)}</span>
-      <div class="item-main"><div class="item-title">${esc(titulo)}</div><div class="item-sub">${esc(sub)}</div></div>
-      <div class="item-amount">${fmt(g.monto)}<small>${nAdj ? `📎 ${nAdj}` : 'sin factura'}</small></div>
+    const items = itemsDe(g);
+    return `<li class="item-wrap">
+      <div class="item" data-id="${g.id}">
+        <span class="item-ico" style="background:${esc(c.color)}22">${esc(c.icono)}</span>
+        <div class="item-main"><div class="item-title">${esc(titulo)}</div><div class="item-sub">${esc(sub)}</div></div>
+        <div class="item-amount">${fmt(g.monto)}<small>${nAdj ? `📎 ${nAdj}` : 'sin factura'}</small></div>
+      </div>
+      ${items.length ? `<details class="prod-toggle"><summary>${items.length} producto${items.length === 1 ? '' : 's'}</summary>${prodsHTML(items)}</details>` : ''}
     </li>`;
+  }
+
+  const itemsDe = (g) => (Array.isArray(g.items) ? g.items : []);
+  function prodsHTML(items) {
+    const total = items.reduce((a, it) => a + (Number(it.valor) || 0), 0);
+    return `<ul class="prod-lista">${items.map((it) => `<li><span>${esc(it.descripcion)}</span>${Number(it.cantidad) !== 1 ? `<span class="q">×${esc(fmtNum.format(it.cantidad))}</span>` : ''}<span class="v">${fmt(it.valor)}</span></li>`).join('')}
+      <li class="tot"><span>Suma de productos</span><span class="v">${fmt(total)}</span></li></ul>`;
   }
 
   function renderInicio() {
@@ -312,8 +323,9 @@
         ${g.metodo_pago ? `<dt>Pago</dt><dd>${esc(g.metodo_pago)}</dd>` : ''}
         ${g.descripcion ? `<dt>Descripción</dt><dd>${esc(g.descripcion)}</dd>` : ''}
       </dl>
+      ${itemsDe(g).length ? `<details class="prods det-prods"><summary><span>🛒 Productos</span><span class="muted">${itemsDe(g).length}</span></summary><div class="prods-body">${prodsHTML(itemsDe(g))}</div></details>` : ''}
       <div class="field">
-        <span class="field-label">Facturas (${adj.length})</span>
+        <span class="field-label">Facturas (${adj.length}) — toca para ver</span>
         <div class="adj-grid" id="det-adj">${adj.length ? adj.map(() => '<div class="adj"><div class="spinner"></div></div>').join('') : '<p class="muted">Sin facturas adjuntas.</p>'}</div>
       </div>`;
     $('#dlg-detalle').showModal();
@@ -321,26 +333,150 @@
       try {
         const urls = await urlsFirmadas(adj.map((a) => a.ruta));
         if (S.detalle !== g) return;
-        $('#det-adj').innerHTML = adj.map((a) => adjHTML(a, urls[a.ruta])).join('');
+        pintarGaleria('det-adj', adj.map((a) => ({ nombre: a.nombre, tipo: a.tipo, src: urls[a.ruta] })));
       } catch (e) { fallo(e, 'No se pudieron cargar las facturas'); }
     }
   }
 
-  function adjHTML(a, url, borrable = false) {
-    const del = borrable ? `<button type="button" class="adj-del" data-del="${esc(a.key)}" aria-label="Quitar">✕</button>` : '';
-    if (esPDF(a.tipo)) {
-      return `<a class="adj" href="${esc(url || '#')}" target="_blank" rel="noopener"><div class="adj-pdf"><b>📄</b>${esc(a.nombre || 'PDF')}</div>${del}</a>`;
-    }
-    return `<div class="adj" data-img="${esc(url || '')}"><img src="${esc(url || '')}" alt="${esc(a.nombre || 'Factura')}" loading="lazy">${del}</div>`;
+  // ---------- Miniaturas y galería ----------
+  S.galerias = {};
+  S.miniaturas = new Map(); // src -> dataURL de la 1.ª página del PDF
+
+  /** items: [{ nombre, tipo, src, key? }] — key presente => se puede quitar (formulario) */
+  function pintarGaleria(gridId, items) {
+    S.galerias[gridId] = items;
+    const grid = $(`#${gridId}`);
+    grid.innerHTML = items.map((a, i) => {
+      const del = a.key ? `<button type="button" class="adj-del" data-del="${esc(a.key)}" aria-label="Quitar">✕</button>` : '';
+      if (esPDF(a.tipo)) {
+        const mini = S.miniaturas.get(a.src);
+        return `<div class="adj" data-gal="${i}" ${mini ? '' : `data-pdf="${esc(a.src || '')}"`} title="${esc(a.nombre || 'PDF')}">
+          ${mini ? `<img class="adj-thumb" src="${mini}" alt="">` : `<div class="adj-pdf"><b>📄</b>${esc(a.nombre || 'PDF')}</div>`}
+          <span class="adj-badge">PDF</span>${del}</div>`;
+      }
+      const verImg = a.src && !/hei[cf]/i.test(a.tipo || '');
+      return `<div class="adj" data-gal="${i}" title="${esc(a.nombre || 'Imagen')}">
+        ${verImg ? `<img src="${esc(a.src)}" alt="${esc(a.nombre || 'Factura')}" loading="lazy">` : `<div class="adj-pdf"><b>🖼️</b>${esc(a.nombre || 'Imagen')}</div>`}${del}</div>`;
+    }).join('');
+    miniaturasPDF(grid);
+  }
+
+  async function miniaturasPDF(grid) {
+    const pendientes = $$('[data-pdf]', grid).filter((el) => el.dataset.pdf);
+    if (!pendientes.length || !window.LectorFacturas) return;
+    try {
+      const pdfjs = await LectorFacturas.pdfjs();
+      for (const el of pendientes) {
+        const src = el.dataset.pdf;
+        try {
+          const pdf = await pdfjs.getDocument(src).promise;
+          const page = await pdf.getPage(1);
+          const vp0 = page.getViewport({ scale: 1 });
+          const vp = page.getViewport({ scale: 240 / vp0.width });
+          const cv = document.createElement('canvas');
+          cv.width = vp.width; cv.height = vp.height;
+          await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+          const url = cv.toDataURL('image/jpeg', 0.8);
+          S.miniaturas.set(src, url);
+          pdf.destroy();
+          if (!el.isConnected) continue;
+          el.removeAttribute('data-pdf');
+          $('.adj-pdf', el)?.replaceWith(Object.assign(document.createElement('img'), { className: 'adj-thumb', src: url, alt: '' }));
+        } catch (e) { console.warn('Miniatura PDF', e); }
+      }
+    } catch (e) { console.warn('pdf.js', e); }
   }
 
   document.addEventListener('click', (e) => {
-    const im = e.target.closest('.adj[data-img]');
-    if (im && !e.target.closest('.adj-del') && im.dataset.img) {
-      $('#visor-img').src = im.dataset.img;
-      $('#dlg-visor').showModal();
-    }
+    const el = e.target.closest('.adj[data-gal]');
+    if (!el || e.target.closest('.adj-del')) return;
+    const grid = el.closest('.adj-grid');
+    abrirVisor(S.galerias[grid?.id] || [], Number(el.dataset.gal));
   });
+
+  // ---------- Visor (imágenes y PDF dentro de la app) ----------
+  const V = { lista: [], i: 0, token: 0 };
+  function abrirVisor(lista, i) {
+    if (!lista.length) return;
+    V.lista = lista;
+    $('#dlg-visor').showModal();
+    mostrarEnVisor(i);
+  }
+
+  async function mostrarEnVisor(i) {
+    const n = V.lista.length;
+    V.i = (i + n) % n;
+    const a = V.lista[V.i];
+    const token = ++V.token;
+    const body = $('#visor-body');
+    body.classList.remove('zoom');
+    body.scrollTo(0, 0);
+    $('#visor-nombre').textContent = a.nombre || (esPDF(a.tipo) ? 'Documento PDF' : 'Imagen');
+    $('#visor-pos').textContent = n > 1 ? `${V.i + 1} de ${n}` : (esPDF(a.tipo) ? 'PDF' : 'Imagen');
+    $('#visor-prev').hidden = $('#visor-next').hidden = n < 2;
+    const bajar = $('#visor-bajar');
+    bajar.href = a.src || '#';
+    bajar.download = a.nombre || '';
+    bajar.target = '_blank';
+    bajar.rel = 'noopener';
+
+    if (!a.src) { body.className = 'visor-body centrar'; body.innerHTML = '<p class="visor-msg">Archivo no disponible.</p>'; return; }
+
+    if (!esPDF(a.tipo)) {
+      body.className = 'visor-body centrar';
+      body.innerHTML = '';
+      const img = new Image();
+      img.alt = a.nombre || 'Factura';
+      img.onerror = () => { if (token === V.token) body.innerHTML = '<p class="visor-msg">Este formato no se puede previsualizar en el navegador (por ejemplo HEIC).<br>Usa ⬇ para descargarlo.</p>'; };
+      img.src = a.src;
+      body.appendChild(img);
+      return;
+    }
+
+    body.className = 'visor-body';
+    body.innerHTML = '<p class="visor-msg"><span class="spinner"></span><br>Abriendo PDF…</p>';
+    try {
+      const pdfjs = await LectorFacturas.pdfjs();
+      const pdf = await pdfjs.getDocument(a.src).promise;
+      if (token !== V.token) return pdf.destroy();
+      body.innerHTML = '';
+      const ancho = Math.min(body.clientWidth - 24, 900) * Math.min(window.devicePixelRatio || 1, 2) * 1.5;
+      const paginas = Math.min(pdf.numPages, 30);
+      for (let p = 1; p <= paginas; p++) {
+        const page = await pdf.getPage(p);
+        const vp = page.getViewport({ scale: ancho / page.getViewport({ scale: 1 }).width });
+        const cv = document.createElement('canvas');
+        cv.width = vp.width; cv.height = vp.height;
+        if (token !== V.token) return pdf.destroy();
+        body.appendChild(cv);
+        await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+      }
+      if (pdf.numPages > paginas) body.insertAdjacentHTML('beforeend', `<p class="visor-msg">Mostrando ${paginas} de ${pdf.numPages} páginas. Descárgalo para ver el resto.</p>`);
+    } catch (e) {
+      console.error(e);
+      if (token === V.token) body.innerHTML = `<p class="visor-msg">No se pudo mostrar el PDF (${esc(e.message || e)}).<br>Usa ⬇ para abrirlo.</p>`;
+    }
+  }
+
+  $('#visor-prev').addEventListener('click', () => mostrarEnVisor(V.i - 1));
+  $('#visor-next').addEventListener('click', () => mostrarEnVisor(V.i + 1));
+  $('#visor-zoom').addEventListener('click', () => $('#visor-body').classList.toggle('zoom'));
+  $('#visor-body').addEventListener('click', (e) => { if (e.target.tagName === 'IMG') $('#visor-body').classList.toggle('zoom'); });
+  $('#dlg-visor').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') mostrarEnVisor(V.i - 1);
+    if (e.key === 'ArrowRight') mostrarEnVisor(V.i + 1);
+  });
+  $('#dlg-visor').addEventListener('close', () => { V.token++; $('#visor-body').innerHTML = ''; });
+  // Deslizar a los lados para cambiar de factura (si no hay zoom)
+  let toque = null;
+  $('#visor-body').addEventListener('touchstart', (e) => { toque = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null; }, { passive: true });
+  $('#visor-body').addEventListener('touchend', (e) => {
+    if (!toque || V.lista.length < 2 || $('#visor-body').classList.contains('zoom') || (window.visualViewport?.scale || 1) > 1.05) return;
+    const dx = e.changedTouches[0].clientX - toque.x;
+    const dy = e.changedTouches[0].clientY - toque.y;
+    if (Math.abs(dx) > 70 && Math.abs(dy) < 60) mostrarEnVisor(V.i + (dx < 0 ? 1 : -1));
+    toque = null;
+  }, { passive: true });
 
   $('#det-editar').addEventListener('click', () => {
     const g = S.detalle;
@@ -390,7 +526,11 @@
       // Campos que el usuario ya definió: la lectura automática no los sobrescribe.
       tocado: new Set(g ? CAMPOS_AUTO : []),
       leyendo: false,
+      items: itemsDe(g || {}).map((it) => ({ ...it })),
+      teniaItems: itemsDe(g || {}).length > 0,
     };
+    $('#form-prods').open = false;
+    renderProds();
     $$('.auto', fG).forEach((el) => el.classList.remove('auto'));
     banner(null);
     if (!S.cats.some((c) => c.id === S.edit.catId)) S.edit.catId = g ? null : S.cats[0]?.id ?? null;
@@ -402,6 +542,7 @@
     fG.descripcion.value = g?.descripcion || '';
     $('#proveedores').innerHTML = [...new Set(S.gastos.map((x) => x.proveedor).filter(Boolean))].slice(0, 200).map((p) => `<option value="${esc(p)}">`).join('');
     renderChips();
+    actualizarSumaProds();
     renderAdjForm();
     $('#dlg-gasto').showModal();
     if (!g) setTimeout(() => fG.monto.focus(), 50);
@@ -419,8 +560,68 @@
     renderChips();
   });
 
+  // ---------- Productos del gasto ----------
+  function renderProds() {
+    const E = S.edit;
+    $('#prods-filas').innerHTML = E.items.map((it, i) => `
+      <div class="prod-fila" data-i="${i}">
+        <input data-campo="descripcion" value="${esc(it.descripcion || '')}" placeholder="Producto" autocomplete="off" aria-label="Producto">
+        <input data-campo="cantidad" value="${esc(it.cantidad ?? 1)}" inputmode="decimal" aria-label="Cantidad">
+        <input data-campo="valor" value="${it.valor ? `$ ${fmtNum.format(it.valor)}` : ''}" inputmode="numeric" placeholder="$ 0" aria-label="Valor">
+        <button type="button" class="btn btn-icon" data-quitar="${i}" aria-label="Quitar producto">✕</button>
+      </div>`).join('') || '<p class="muted small">Sin productos. Se llenan solos al leer la factura, o agrégalos a mano.</p>';
+    actualizarSumaProds();
+  }
+
+  function actualizarSumaProds() {
+    const E = S.edit;
+    if (!E) return;
+    const n = E.items.length;
+    const total = E.items.reduce((a, it) => a + (Number(it.valor) || 0), 0);
+    $('#prods-resumen').textContent = n ? `${n} · ${fmt(total)}` : 'opcional';
+    const monto = Number(digitos(fG.monto.value));
+    const dif = n && monto && Math.abs(monto - total) > 1;
+    $('#prods-suma').innerHTML = n ? `Suma: <b>${fmt(total)}</b>${dif ? ` <span class="diff">(${monto > total ? 'faltan' : 'sobran'} ${fmt(Math.abs(monto - total))})</span>` : ''}` : '';
+  }
+
+  $('#prods-filas').addEventListener('input', (e) => {
+    const fila = e.target.closest('.prod-fila');
+    if (!fila) return;
+    const it = S.edit.items[Number(fila.dataset.i)];
+    // Ojo: los inputs de productos usan data-campo (no "name") para no chocar con fG.descripcion.
+    const k = e.target.dataset.campo;
+    if (k === 'valor') {
+      const d = digitos(e.target.value).slice(0, 13);
+      e.target.value = d ? `$ ${fmtNum.format(Number(d))}` : '';
+      it.valor = Number(d) || 0;
+    } else if (k === 'cantidad') {
+      it.cantidad = Number(e.target.value.replace(',', '.')) || 1;
+    } else it.descripcion = e.target.value;
+    S.edit.tocado.add('items');
+    $('#form-prods').classList.remove('auto');
+    actualizarSumaProds();
+  });
+  $('#prods-filas').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-quitar]');
+    if (!b) return;
+    S.edit.items.splice(Number(b.dataset.quitar), 1);
+    S.edit.tocado.add('items');
+    renderProds();
+  });
+  $('#prod-add').addEventListener('click', () => {
+    S.edit.items.push({ descripcion: '', cantidad: 1, valor: 0 });
+    S.edit.tocado.add('items');
+    renderProds();
+    $$('#prods-filas .prod-fila input[data-campo=descripcion]').pop()?.focus();
+  });
+  fG.monto.addEventListener('input', actualizarSumaProds);
+
+  const itemsLimpios = (items) => items
+    .map((it) => ({ descripcion: String(it.descripcion || '').trim(), cantidad: Number(it.cantidad) || 1, valor: Math.round(Number(it.valor) || 0) }))
+    .filter((it) => it.descripcion || it.valor);
+
   // ---------- Lectura automática de facturas ----------
-  const CAMPOS_AUTO = ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago', 'cat'];
+  const CAMPOS_AUTO = ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago', 'cat', 'items'];
   ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago'].forEach((k) => {
     fG[k].addEventListener('input', () => { S.edit?.tocado.add(k); fG[k].classList.remove('auto'); });
   });
@@ -495,6 +696,13 @@
     poner('descripcion', desc, 'n.º de factura');
     if (r.metodo_pago && CFG.METODOS_PAGO.includes(r.metodo_pago)) poner('metodo_pago', r.metodo_pago, 'método de pago');
 
+    if (r.items?.length && (!E.tocado.has('items') || (forzar && !itemsLimpios(E.items).length))) {
+      E.items = r.items.map((it) => ({ ...it }));
+      renderProds();
+      $('#form-prods').classList.add('auto');
+      llenos.push(`${r.items.length} producto${r.items.length === 1 ? '' : 's'}`);
+    }
+
     if (!E.tocado.has('cat')) {
       const n = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
       // 1) misma categoría que usaste antes con ese proveedor; 2) sugerencia por palabras clave
@@ -519,9 +727,10 @@
     }
     if (S.edit !== E) return;
     if (!E.leyendo && ($('#auto-banner').hidden || !(vivos.length || E.nuevos.length))) banner(null);
-    $('#form-adjuntos').innerHTML =
-      vivos.map((a) => adjHTML(a, urls[a.ruta], true)).join('') +
-      E.nuevos.map((n) => adjHTML({ key: n.key, tipo: n.file.type, nombre: n.file.name }, n.preview, true)).join('');
+    pintarGaleria('form-adjuntos', [
+      ...vivos.map((a) => ({ key: `e${a.id}`, nombre: a.nombre, tipo: a.tipo, src: urls[a.ruta] })),
+      ...E.nuevos.map((n) => ({ key: n.key, nombre: n.file.name, tipo: n.file.type, src: n.preview })),
+    ]);
   }
 
   $('#form-adjuntos').addEventListener('click', (e) => {
@@ -544,9 +753,9 @@
       if (!(f0.type.startsWith('image/') || esPDF(f0.type))) { toast(`${f0.name}: solo imágenes o PDF`, true); continue; }
       const f = await comprimir(f0);
       if (f.size > MAX_FILE) { toast(`${f.name} supera 10 MB`, true); continue; }
-      const puedePrevisualizar = f.type.startsWith('image/') && !/hei[cf]/.test(f.type);
       // Para leer usamos el original (mejor resolución); para subir, el comprimido.
-      S.edit.nuevos.push({ key: `n${Math.random().toString(36).slice(2)}`, file: f, original: f0, preview: puedePrevisualizar ? URL.createObjectURL(f) : '' });
+      // preview: URL local para miniatura y visor (imágenes y PDF).
+      S.edit.nuevos.push({ key: `n${Math.random().toString(36).slice(2)}`, file: f, original: f0, preview: URL.createObjectURL(f) });
     }
     renderAdjForm();
     const agregado = S.edit.nuevos.length > antes ? S.edit.nuevos[S.edit.nuevos.length - 1] : null;
@@ -591,6 +800,10 @@
       metodo_pago: fG.metodo_pago.value || null,
       descripcion: fG.descripcion.value.trim() || null,
     };
+    // Solo se envía "items" si hay productos (o había): así la app sigue funcionando
+    // aunque aún no se haya ejecutado la migración 002_productos.sql.
+    const items = itemsLimpios(E.items);
+    if (items.length || E.teniaItems) fila.items = items;
     const eraEdicion = !!E.id;
     const btn = $('#btn-guardar');
     btn.disabled = true;
@@ -614,6 +827,7 @@
         if (up.error) throw up.error;
         const ins = await sb.from('adjuntos').insert({ gasto_id: id, ruta, nombre: n.file.name, tipo: n.file.type, tamano: n.file.size });
         if (ins.error) throw ins.error;
+        URL.revokeObjectURL(n.preview);
         E.nuevos = E.nuevos.filter((x) => x !== n);
       }
 
@@ -633,7 +847,9 @@
       toast(eraEdicion ? 'Gasto actualizado' : 'Gasto guardado');
       refrescar();
     } catch (err) {
-      fallo(err, 'No se pudo guardar');
+      if (/items/.test(err?.message || '') && /PGRST204|42703/.test(err?.code || '')) {
+        toast('Para guardar productos falta actualizar la base de datos: ejecuta supabase/migraciones/002_productos.sql en el SQL Editor de Supabase.', true);
+      } else fallo(err, 'No se pudo guardar');
       try { await cargarGastos(); } catch { /* ignorar */ }
     }
     btn.disabled = false;
@@ -705,22 +921,68 @@
   });
 
   // ---------- Exportar ----------
-  function filasExport() {
+  function gastosExport() {
     const todo = $('#exp-todo').checked;
     const mes = $('#exp-mes').value;
-    const lista = S.gastos.filter((g) => todo || !mes || g.fecha.startsWith(mes)).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
-    return {
-      nombre: `gastos_${todo || !mes ? 'historial' : mes}`,
-      filas: lista.map((g) => ({
-        Fecha: g.fecha,
-        Categoría: catDe(g.categoria_id).nombre,
-        Proveedor: g.proveedor || '',
-        Descripción: g.descripcion || '',
-        'Método de pago': g.metodo_pago || '',
-        Monto: g.monto,
-        Facturas: g.adjuntos?.length || 0,
-      })),
-    };
+    const lista = S.gastos.filter((g) => todo || !mes || g.fecha.startsWith(mes)).slice().sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id);
+    return { nombre: `gastos_${todo || !mes ? 'historial' : mes}`, lista };
+  }
+
+  const slug = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'gasto';
+  /** Ruta del archivo dentro del ZIP: facturas/2026-11/2026-11-14_Exito_123_1.jpg */
+  function rutaEnZip(g, a, j) {
+    const ext = (a.ruta.split('.').pop() || 'bin').toLowerCase();
+    const n = g.adjuntos.length;
+    return `facturas/${g.fecha.slice(0, 7)}/${g.fecha}_${slug(g.proveedor || catDe(g.categoria_id).nombre)}_${g.id}${n > 1 ? `_${j + 1}` : ''}.${ext}`;
+  }
+
+  const textoProductos = (g) => itemsDe(g).map((it) => `${it.descripcion}${Number(it.cantidad) !== 1 ? ` x${it.cantidad}` : ''} ${fmt(it.valor)}`).join('; ');
+
+  /** enlaces(g) -> [{ texto, url }] por cada factura del gasto */
+  function construirLibro(lista, enlaces) {
+    const maxFac = Math.max(1, ...lista.map((g) => g.adjuntos?.length || 0));
+    const cab = ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método de pago', 'Monto', 'Productos',
+      ...Array.from({ length: maxFac }, (_, i) => `Factura ${i + 1}`)];
+    const MONEDA = '"$"#,##0';
+    const filas = lista.map((g) => {
+      const fac = enlaces(g).map((e) => ({ t: 's', v: e.texto, l: { Target: e.url, Tooltip: 'Abrir factura' } }));
+      return [g.fecha, catDe(g.categoria_id).nombre, g.proveedor || '', g.descripcion || '', g.metodo_pago || '',
+        { t: 'n', v: g.monto, z: MONEDA }, itemsDe(g).length || '', ...fac];
+    });
+    const ws = XLSX.utils.aoa_to_sheet([cab, ...filas,
+      ['', '', '', '', 'TOTAL', { t: 'n', f: `SUM(F2:F${filas.length + 1})`, z: MONEDA }]]);
+    ws['!cols'] = [{ wch: 11 }, { wch: 15 }, { wch: 24 }, { wch: 32 }, { wch: 14 }, { wch: 13 }, { wch: 10 }, ...Array(maxFac).fill({ wch: 34 })];
+    ws['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(cab.length - 1)}${filas.length + 1}` };
+
+    const prods = lista.flatMap((g) => itemsDe(g).map((it) => [g.fecha, g.proveedor || '', catDe(g.categoria_id).nombre, it.descripcion,
+      { t: 'n', v: Number(it.cantidad) || 1 }, { t: 'n', v: Number(it.valor) || 0, z: MONEDA }]));
+    const wsP = XLSX.utils.aoa_to_sheet([['Fecha', 'Proveedor', 'Categoría', 'Producto', 'Cantidad', 'Valor'], ...prods,
+      ...(prods.length ? [['', '', '', 'TOTAL', '', { t: 'n', f: `SUM(F2:F${prods.length + 1})`, z: MONEDA }]] : [])]);
+    wsP['!cols'] = [{ wch: 11 }, { wch: 24 }, { wch: 15 }, { wch: 36 }, { wch: 9 }, { wch: 13 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Gastos');
+    XLSX.utils.book_append_sheet(wb, wsP, 'Productos');
+    return wb;
+  }
+
+  const SIETE_DIAS = 7 * 24 * 3600;
+  /** Enlaces firmados de larga duración (para Excel/CSV sin ZIP). */
+  async function enlacesTemporales(lista) {
+    const rutas = lista.flatMap((g) => (g.adjuntos || []).map((a) => a.ruta));
+    const mapa = {};
+    for (let i = 0; i < rutas.length; i += 100) {
+      const { data, error } = await sb.storage.from(CFG.BUCKET).createSignedUrls(rutas.slice(i, i + 100), SIETE_DIAS);
+      if (error) throw error;
+      data.forEach((d) => { if (d.signedUrl) mapa[d.path] = d.signedUrl; });
+    }
+    return (g) => (g.adjuntos || []).map((a) => ({ texto: a.nombre || 'Ver factura', url: mapa[a.ruta] })).filter((e) => e.url);
+  }
+
+  function progresoExport(msg) {
+    const p = $('#exp-progreso');
+    p.hidden = !msg;
+    p.textContent = msg || '';
   }
 
   function descargar(blob, nombre) {
@@ -730,43 +992,89 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
 
-  $('#exp-csv').addEventListener('click', () => {
-    const { nombre, filas } = filasExport();
-    if (!filas.length) return toast('No hay gastos para exportar', true);
-    const cols = Object.keys(filas[0]);
-    const celda = (v) => (/[";\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v);
-    // Separador ";" para que Excel en español (Colombia) lo abra en columnas.
-    const csv = [cols.join(';'), ...filas.map((f) => cols.map((c) => celda(f[c])).join(';'))].join('\r\n');
-    descargar(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), `${nombre}.csv`);
+  $('#exp-csv').addEventListener('click', async () => {
+    const { nombre, lista } = gastosExport();
+    if (!lista.length) return toast('No hay gastos para exportar', true);
+    loading(true);
+    try {
+      const enlaces = await enlacesTemporales(lista);
+      const maxFac = Math.max(0, ...lista.map((g) => g.adjuntos?.length || 0));
+      const cab = ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método de pago', 'Monto', 'Productos',
+        ...Array.from({ length: maxFac }, (_, i) => `Factura ${i + 1} (enlace 7 días)`)];
+      const celda = (v) => (/[";\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v);
+      const filas = lista.map((g) => [g.fecha, catDe(g.categoria_id).nombre, g.proveedor || '', g.descripcion || '', g.metodo_pago || '',
+        g.monto, textoProductos(g), ...enlaces(g).map((e) => e.url)]);
+      // Separador ";" para que Excel en español (Colombia) lo abra en columnas.
+      const csv = [cab, ...filas].map((f) => f.map(celda).join(';')).join('\r\n');
+      descargar(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), `${nombre}.csv`);
+    } catch (err) { fallo(err, 'No se pudo exportar'); }
+    loading(false);
   });
 
-  let xlsxCargado;
-  const cargarXLSX = () => (xlsxCargado ||= new Promise((ok, mal) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
-    s.onload = ok;
-    s.onerror = () => { xlsxCargado = null; mal(new Error('No se pudo cargar la librería de Excel')); };
-    document.head.appendChild(s);
-  }));
+  const cargarXLSX = () => LectorFacturas.cargar('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+  const cargarZip = () => LectorFacturas.cargar('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
 
   $('#exp-xlsx').addEventListener('click', async () => {
-    const { nombre, filas } = filasExport();
-    if (!filas.length) return toast('No hay gastos para exportar', true);
+    const { nombre, lista } = gastosExport();
+    if (!lista.length) return toast('No hay gastos para exportar', true);
     loading(true);
     try {
       await cargarXLSX();
-      const ws = XLSX.utils.json_to_sheet(filas);
-      ws['!cols'] = [{ wch: 11 }, { wch: 16 }, { wch: 24 }, { wch: 32 }, { wch: 15 }, { wch: 14 }, { wch: 9 }];
-      const total = filas.length + 1;
-      XLSX.utils.sheet_add_aoa(ws, [['', '', '', '', 'TOTAL', { t: 'n', f: `SUM(F2:F${total})` }]], { origin: -1 });
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Gastos');
+      const wb = construirLibro(lista, await enlacesTemporales(lista));
       XLSX.writeFile(wb, `${nombre}.xlsx`);
     } catch (err) { fallo(err, 'No se pudo exportar'); }
     loading(false);
+  });
+
+  $('#exp-zip').addEventListener('click', async () => {
+    const { nombre, lista } = gastosExport();
+    if (!lista.length) return toast('No hay gastos para exportar', true);
+    const btn = $('#exp-zip');
+    btn.disabled = true;
+    try {
+      progresoExport('Preparando…');
+      await Promise.all([cargarXLSX(), cargarZip()]);
+      const zip = new JSZip();
+      const tareas = lista.flatMap((g) => (g.adjuntos || []).map((a, j) => ({ g, a, ruta: rutaEnZip(g, a, j) })));
+      const fallidos = [];
+      let hechos = 0;
+      // Descarga en paralelo (4 a la vez)
+      const cola = [...tareas];
+      await Promise.all(Array.from({ length: Math.min(4, cola.length) }, async () => {
+        while (cola.length) {
+          const t = cola.shift();
+          const { data, error } = await sb.storage.from(CFG.BUCKET).download(t.a.ruta);
+          if (error || !data) fallidos.push(t); else zip.file(t.ruta, data);
+          progresoExport(`Descargando facturas… ${++hechos} de ${tareas.length}`);
+        }
+      }));
+      const okRutas = new Map(tareas.filter((t) => !fallidos.includes(t)).map((t) => [t.a.id, t.ruta]));
+      const wb = construirLibro(lista, (g) => (g.adjuntos || []).filter((a) => okRutas.has(a.id))
+        .map((a) => ({ texto: okRutas.get(a.id).split('/').pop(), url: okRutas.get(a.id) })));
+      zip.file(`${nombre}.xlsx`, XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+      zip.file('LEEME.txt', [
+        'Exportación de Mis Gastos',
+        `Generado: ${new Date().toLocaleString('es-CO')}`,
+        `Gastos: ${lista.length} · Total: ${fmt(suma(lista))} · Facturas: ${okRutas.size}`,
+        '',
+        `1. Descomprime TODO el .zip en una carpeta (no lo abras desde dentro del .zip).`,
+        `2. Abre ${nombre}.xlsx: en la hoja "Gastos", las columnas "Factura N" son vínculos que abren cada archivo.`,
+        '3. La hoja "Productos" tiene el detalle de lo comprado en cada gasto.',
+        ...(fallidos.length ? ['', `Atención: no se pudieron descargar ${fallidos.length} factura(s).`] : []),
+      ].join('\r\n'));
+      progresoExport('Comprimiendo…');
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      descargar(blob, `${nombre}.zip`);
+      progresoExport(fallidos.length ? `Listo, pero ${fallidos.length} factura(s) no se pudieron descargar.` : `Listo: ${lista.length} gastos y ${okRutas.size} facturas.`);
+      setTimeout(() => progresoExport(null), 6000);
+    } catch (err) {
+      progresoExport(null);
+      fallo(err, 'No se pudo exportar');
+    }
+    btn.disabled = false;
   });
 
   // ---------- Diálogos ----------

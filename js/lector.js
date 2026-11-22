@@ -100,9 +100,18 @@
 
   const RE_NO_PROVEEDOR = /factura|nit\b|n\.i\.t|tel[eé:.]|cel[:.]|direcc|calle|carrera|\bcra\b|\bcl\b|avenida|\bav\b|www|http|@|r[eé]gimen|responsable|\biva\b|resoluci|fecha|cliente|p[aá]gina|documento|equivalente|pos\b|caja|cajero|ticket|tiquete|original|copia|electr[oó]nica|venta|bogot|medell|cali\b|barranq|colombia/i;
 
+  /** "LECHE ENTERA 1L" -> "Leche Entera 1L"; respeta medidas (1L, 500g), siglas cortas (AA) y S.A.S. */
   function titulo(s) {
     if (s !== s.toUpperCase()) return s.trim();
-    return s.toLowerCase().replace(/(^|\s|[-&])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()).replace(/\b(S\.?a\.?s?\.?|Ltda\.?)$/i, (m) => m.toUpperCase()).trim();
+    const MENORES = new Set(['de', 'del', 'y', 'con', 'para', 'por']);
+    return s.trim().split(/\s+/).map((w, i) => {
+      if (/\d/.test(w) || /^(s\.?a\.?s?\.?|ltda\.?)$/i.test(w)) return w;
+      const l = w.toLowerCase();
+      if (i > 0 && MENORES.has(l)) return l;
+      // Siglas cortas (AA, XL, KG) se dejan en mayúscula; palabras comunes no.
+      if (w.length <= 2 && /^\p{L}+$/u.test(w) && i > 0 && !/^(el|la|lo|al|en|un|mi|su|tu|yo|me|se|le|ya|no|si)$/.test(l)) return w;
+      return l.replace(/(^|[-&])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+    }).join(' ');
   }
 
   // ---------- Análisis de texto ----------
@@ -183,7 +192,35 @@
     const pago = PISTAS_PAGO.find(([, re]) => re.test(nTexto));
     if (pago) res.metodo_pago = pago[0];
 
+    const items = parsearItems(lineas);
+    if (items.length) res.items = items;
+
     return res;
+  }
+
+  /** Productos: líneas "descripción ... valor" antes del subtotal/total. */
+  function parsearItems(lineas) {
+    const FIN = /^(sub\s*-?\s*total|total|valor\s*total|neto|gran\s*total|base\s*grav|forma\s*de\s*pago|medio\s*de\s*pago)/;
+    const NO_ITEM = /\biva\b|impuesto|imp\.?\s*consumo|descuento|dcto|propina|cambio|efectivo|recibido|tarjeta|nequi|daviplata|saldo|nit\b|n\.i\.t|tel[eé:.]|fecha|factura|resoluci|cufe|autoriz|cajer|caja\b|cliente|direcc|calle|carrera|régimen|regimen|responsable|pagina|página|hora|vence|limite|límite|valor a pagar|total/i;
+    const items = [];
+    for (const l of lineas) {
+      const n = norm(l);
+      if (FIN.test(n)) break;
+      if (NO_ITEM.test(n)) continue;
+      // [cantidad] descripción ... valor [letra de impuesto]
+      const m = /^(?:(\d{1,3}(?:[.,]\d{1,3})?)\s*(?:x|un|und|uds?|kg|lb)?\s+)?(.*?\p{L}.*?)\s+\$?\s?(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d{3,}(?:[.,]\d{2})?)\s*[A-Z*]?$/iu.exec(l);
+      if (!m) continue;
+      const valor = aNumero(m[3]);
+      let desc = m[2].replace(/^\d{6,}\s+/, '').replace(/\s{2,}/g, ' ').replace(/[\s.:$-]+$/, '').trim();
+      // "2 x 4.950" al final de la descripción: cantidad × unitario
+      let cantidad = m[1] ? Number(m[1].replace(',', '.')) : 1;
+      const xu = /\s(\d{1,3})\s*[xX*]\s*\$?\s?[\d.,]+$/.exec(desc);
+      if (xu) { cantidad = Number(xu[1]); desc = desc.slice(0, xu.index).trim(); }
+      const letras = (desc.match(/\p{L}/gu) || []).length;
+      if (!valor || valor < 50 || letras < 3 || desc.length > 60) continue;
+      items.push({ descripcion: titulo(desc), cantidad: Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1, valor });
+    }
+    return items.slice(0, 60);
   }
 
   /** QR de factura electrónica DIAN: "NumFac: ... FecFac: ... NitFac: ... ValTolFac: ... CUFE: ..." */
@@ -350,5 +387,12 @@
     return { ...deTexto, ...(qr || {}), fuentes, texto };
   }
 
-  window.LectorFacturas = { analizar, parsearTexto, parsearQR, aNumero };
+  /** pdf.js listo para usar (lo reutiliza el visor de la app). */
+  async function pdfjs() {
+    await cargar(LIBS.pdfjs);
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = LIBS.pdfWorker;
+    return window.pdfjsLib;
+  }
+
+  window.LectorFacturas = { analizar, parsearTexto, parsearQR, parsearItems, aNumero, pdfjs, cargar };
 })();

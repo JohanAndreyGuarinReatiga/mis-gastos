@@ -104,9 +104,15 @@
             <label class="check"><input type="checkbox" id="exp-todo"> Todo el historial</label>
           </div>
           <div class="row">
-            <button class="btn" id="exp-xlsx" type="button">⬇ Excel (.xlsx)</button>
-            <button class="btn" id="exp-csv" type="button">⬇ CSV</button>
+            <button class="btn btn-primary" id="exp-zip" type="button">📦 Excel + facturas (.zip)</button>
           </div>
+          <p class="muted small">Incluye los archivos de las facturas en carpetas por mes. En el Excel, cada factura es un vínculo que abre el archivo, y hay una hoja aparte con los productos. Los vínculos funcionan siempre, sin internet.</p>
+          <div class="row">
+            <button class="btn" id="exp-xlsx" type="button">⬇ Solo Excel</button>
+            <button class="btn" id="exp-csv" type="button">⬇ Solo CSV</button>
+          </div>
+          <p class="muted small">Solo Excel o CSV: las facturas van como enlaces en línea que <b>vencen en 7 días</b>. Cualquiera que tenga el archivo puede abrirlas durante ese tiempo.</p>
+          <p class="muted small" id="exp-progreso" hidden></p>
         </div>
         <div class="card">
           <h3>Cuenta</h3>
@@ -162,6 +168,17 @@
         <label>Descripción
           <textarea name="descripcion" rows="2" placeholder="Opcional"></textarea>
         </label>
+        <details class="prods" id="form-prods">
+          <summary><span>🛒 Productos</span><span class="muted" id="prods-resumen"></span></summary>
+          <div class="prods-body">
+            <div class="prod-head"><span>Producto</span><span>Cant.</span><span>Valor</span><span></span></div>
+            <div id="prods-filas"></div>
+            <div class="row prods-foot">
+              <button type="button" class="btn btn-sm" id="prod-add">＋ Agregar producto</button>
+              <span class="muted" id="prods-suma"></span>
+            </div>
+          </div>
+        </details>
       </div>
       <footer class="sheet-foot">
         <button class="btn" type="button" data-close>Cancelar</button>
@@ -208,8 +225,15 @@
 
   <!-- ============ VISOR ============ -->
   <dialog id="dlg-visor" class="visor">
-    <button class="btn btn-icon visor-close" type="button" data-close aria-label="Cerrar">✕</button>
-    <img id="visor-img" alt="Factura">
+    <header class="visor-bar">
+      <div class="visor-info"><b id="visor-nombre"></b><span id="visor-pos"></span></div>
+      <button class="btn btn-icon" type="button" id="visor-zoom" aria-label="Acercar">🔍</button>
+      <a class="btn btn-icon" id="visor-bajar" download aria-label="Descargar">⬇</a>
+      <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+    </header>
+    <div class="visor-body" id="visor-body"></div>
+    <button class="visor-nav visor-prev" type="button" id="visor-prev" aria-label="Anterior">‹</button>
+    <button class="visor-nav visor-next" type="button" id="visor-next" aria-label="Siguiente">›</button>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
