@@ -21,7 +21,7 @@ las facturas en foto o PDF de cada uno.
 - Lista con búsqueda y filtros por mes y categoría.
 - Categorías editables, con ícono y color.
 - Exportar a Excel (.xlsx) o CSV.
-- PWA: se puede "Agregar a pantalla de inicio" en Android e iPhone.
+- PWA 
 
 ## Configuración (una sola vez)
 1. **Base de datos:** en Supabase ve a **SQL Editor → New query**, pega el contenido de
@@ -31,7 +31,6 @@ las facturas en foto o PDF de cada uno.
 3. **Cerrar registros:** ve a **Authentication → Sign In / Providers** y desactiva **Allow new users to sign up**,
    para que nadie más pueda crear cuenta.
 4. La URL del proyecto y la *publishable key* están en [`js/config.js`](js/config.js).
-   **Nunca pongas ahí la *secret key*.**
 
 ## Probar en local
 ```bash
