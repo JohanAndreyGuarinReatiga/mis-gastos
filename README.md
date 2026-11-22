@@ -11,6 +11,12 @@ las facturas en foto o PDF de cada uno.
 - Inicio de sesión con correo y contraseña.
 - Registrar, editar y eliminar gastos: monto, fecha, categoría, proveedor, método de pago y descripción.
 - Adjuntar facturas tomando la foto con la cámara del celular o subiendo imágenes o PDF (varios por gasto). Las fotos se comprimen antes de subirse.
+- **Lectura automática de facturas ✨:** al agregar una foto o PDF, la app llena sola el monto, la fecha, el proveedor, el número de factura, el NIT, el método de pago y la categoría. Usa, en orden de exactitud:
+  1. el **QR de la factura electrónica DIAN** (total, fecha, NIT y número exactos);
+  2. el **texto del PDF**;
+  3. **OCR en español** (Tesseract.js) para fotos de tiquetes y facturas en papel.
+
+  Todo corre en el navegador: las facturas no se envían a ningún servicio externo. Los campos que ya escribiste no se sobrescriben, y la categoría se aprende de tus gastos anteriores con el mismo proveedor.
 - Resumen mensual: total, variación frente al mes anterior, promedio diario, gastos sin factura, gráfico por categoría y tendencia de 6 meses.
 - Lista con búsqueda y filtros por mes y categoría.
 - Categorías editables, con ícono y color.
@@ -33,12 +39,15 @@ powershell -ExecutionPolicy Bypass -File tools/serve.ps1
 ```
 Abre http://localhost:8080
 
+Las pruebas del lector de facturas están en http://localhost:8080/tools/lector-test.html. Generan facturas de ejemplo (texto, PDF, foto con QR y foto solo OCR) y verifican lo extraído.
+
 ## Estructura
 ```
 index.html            Interfaz (vistas y modales)
 css/styles.css        Estilos responsivos (claro/oscuro)
 js/config.js          URL y llave pública de Supabase, categorías por defecto
 js/app.js             Lógica de la app
+js/lector.js          Lectura automática de facturas (QR DIAN, PDF, OCR)
 sw.js                 Service worker (PWA)
 manifest.webmanifest  Datos de instalación de la PWA
 supabase/schema.sql   Tablas, reglas de seguridad y bucket de facturas

@@ -387,7 +387,12 @@
       existentes: (g?.adjuntos || []).map((a) => ({ ...a, key: `e${a.id}` })),
       borrar: [],
       nuevos: [],
+      // Campos que el usuario ya definió: la lectura automática no los sobrescribe.
+      tocado: new Set(g ? CAMPOS_AUTO : []),
+      leyendo: false,
     };
+    $$('.auto', fG).forEach((el) => el.classList.remove('auto'));
+    banner(null);
     if (!S.cats.some((c) => c.id === S.edit.catId)) S.edit.catId = g ? null : S.cats[0]?.id ?? null;
     $('#form-title').textContent = g ? 'Editar gasto' : 'Nuevo gasto';
     fG.monto.value = g ? `$ ${fmtNum.format(g.monto)}` : '';
@@ -410,8 +415,100 @@
     const b = e.target.closest('[data-cat]');
     if (!b) return;
     S.edit.catId = Number(b.dataset.cat);
+    S.edit.tocado.add('cat');
     renderChips();
   });
+
+  // ---------- Lectura automática de facturas ----------
+  const CAMPOS_AUTO = ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago', 'cat'];
+  ['monto', 'fecha', 'proveedor', 'descripcion', 'metodo_pago'].forEach((k) => {
+    fG[k].addEventListener('input', () => { S.edit?.tocado.add(k); fG[k].classList.remove('auto'); });
+  });
+
+  function banner(msg, { cargando = false, error = false } = {}) {
+    const E = S.edit;
+    const hayArchivos = E && (E.nuevos.length || E.existentes.some((a) => !E.borrar.includes(a.id)));
+    const b = $('#auto-banner');
+    b.hidden = !msg && !hayArchivos;
+    b.classList.toggle('err', error);
+    $('#auto-msg').innerHTML = msg ? `${cargando ? '<span class="spinner"></span>' : ''}${esc(msg)}` : 'Puedes autocompletar los datos desde la factura.';
+    $('#btn-leer').hidden = cargando;
+  }
+
+  $('#btn-leer').addEventListener('click', () => leerFactura(null, true));
+
+  async function archivoParaLeer(E) {
+    if (E.nuevos.length) return E.nuevos[E.nuevos.length - 1].file;
+    const a = E.existentes.find((x) => !E.borrar.includes(x.id));
+    if (!a) return null;
+    const { data, error } = await sb.storage.from(CFG.BUCKET).download(a.ruta);
+    if (error) throw error;
+    return new File([data], a.nombre || 'factura', { type: a.tipo || data.type });
+  }
+
+  /** @param forzar si es true (botón), también rellena campos que el usuario no ha tocado pero ya tienen valor */
+  async function leerFactura(file, forzar = false) {
+    const E = S.edit;
+    if (!E || E.leyendo || !window.LectorFacturas) return;
+    E.leyendo = true;
+    banner('Leyendo factura…', { cargando: true });
+    try {
+      file ||= await archivoParaLeer(E);
+      if (!file) { banner('Primero agrega una foto o PDF de la factura.'); return; }
+      const conocidos = [...new Set(S.gastos.map((g) => g.proveedor).filter(Boolean))];
+      const r = await LectorFacturas.analizar(file, {
+        conocidos,
+        progreso: (m) => { if (S.edit === E) banner(m, { cargando: true }); },
+      });
+      if (S.edit !== E) return;
+      const llenos = aplicarLectura(E, r, forzar);
+      const fuente = r.fuentes.join(' + ');
+      if (llenos.length) {
+        banner(`✨ Completé ${llenos.join(', ')} (${fuente}).${r.montoSeguro === false ? ' El monto es una suposición:' : ''} Revisa antes de guardar.`);
+      } else if (r.monto || r.fecha || r.proveedor) {
+        banner(`Leí la factura (${fuente}), pero ya habías llenado esos campos.`);
+      } else {
+        banner('No encontré datos claros en la factura. Complétalos a mano o prueba con una foto más nítida.', { error: true });
+      }
+      console.info('Lectura de factura:', r);
+    } catch (e) {
+      console.error(e);
+      if (S.edit === E) banner(`No se pudo leer la factura: ${e.message || e}`, { error: true });
+    } finally {
+      E.leyendo = false;
+    }
+  }
+
+  function aplicarLectura(E, r, forzar) {
+    const llenos = [];
+    const puede = (k) => !E.tocado.has(k) || (forzar && k !== 'cat' && !fG[k]?.value);
+    const poner = (k, valor, etiqueta) => {
+      if (valor == null || valor === '' || !puede(k)) return;
+      fG[k].value = valor;
+      fG[k].classList.add('auto');
+      llenos.push(etiqueta);
+    };
+    if (r.monto) poner('monto', `$ ${fmtNum.format(r.monto)}`, 'monto');
+    poner('fecha', r.fecha, 'fecha');
+    poner('proveedor', r.proveedor, 'proveedor');
+    const desc = [r.numero && `Factura ${r.numero}`, r.nit && `NIT ${r.nit}`].filter(Boolean).join(' · ');
+    poner('descripcion', desc, 'n.º de factura');
+    if (r.metodo_pago && CFG.METODOS_PAGO.includes(r.metodo_pago)) poner('metodo_pago', r.metodo_pago, 'método de pago');
+
+    if (!E.tocado.has('cat')) {
+      const n = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+      // 1) misma categoría que usaste antes con ese proveedor; 2) sugerencia por palabras clave
+      const previo = r.proveedor && S.gastos.find((g) => n(g.proveedor) === n(r.proveedor) && g.categoria_id);
+      const cat = previo ? S.cats.find((c) => c.id === previo.categoria_id) : S.cats.find((c) => n(c.nombre) === n(r.categoria));
+      if (cat) {
+        E.catId = cat.id;
+        renderChips();
+        $(`#form-cats [data-cat="${cat.id}"]`)?.classList.add('auto');
+        llenos.push('categoría');
+      }
+    }
+    return llenos;
+  }
 
   async function renderAdjForm() {
     const E = S.edit;
@@ -421,6 +518,7 @@
       try { urls = await urlsFirmadas(vivos.map((a) => a.ruta)); } catch (e) { fallo(e, 'No se pudieron cargar las facturas'); }
     }
     if (S.edit !== E) return;
+    if (!E.leyendo && ($('#auto-banner').hidden || !(vivos.length || E.nuevos.length))) banner(null);
     $('#form-adjuntos').innerHTML =
       vivos.map((a) => adjHTML(a, urls[a.ruta], true)).join('') +
       E.nuevos.map((n) => adjHTML({ key: n.key, tipo: n.file.type, nombre: n.file.name }, n.preview, true)).join('');
@@ -441,14 +539,19 @@
   });
 
   async function agregarArchivos(files) {
+    const antes = S.edit.nuevos.length;
     for (const f0 of files) {
       if (!(f0.type.startsWith('image/') || esPDF(f0.type))) { toast(`${f0.name}: solo imágenes o PDF`, true); continue; }
       const f = await comprimir(f0);
       if (f.size > MAX_FILE) { toast(`${f.name} supera 10 MB`, true); continue; }
       const puedePrevisualizar = f.type.startsWith('image/') && !/hei[cf]/.test(f.type);
-      S.edit.nuevos.push({ key: `n${Math.random().toString(36).slice(2)}`, file: f, preview: puedePrevisualizar ? URL.createObjectURL(f) : '' });
+      // Para leer usamos el original (mejor resolución); para subir, el comprimido.
+      S.edit.nuevos.push({ key: `n${Math.random().toString(36).slice(2)}`, file: f, original: f0, preview: puedePrevisualizar ? URL.createObjectURL(f) : '' });
     }
     renderAdjForm();
+    const agregado = S.edit.nuevos.length > antes ? S.edit.nuevos[S.edit.nuevos.length - 1] : null;
+    // Lectura automática si el monto aún no lo escribió el usuario.
+    if (agregado && !S.edit.tocado.has('monto')) leerFactura(agregado.original);
   }
   ['#in-camara', '#in-archivo'].forEach((s) => $(s).addEventListener('change', async (e) => {
     await agregarArchivos([...e.target.files]);

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Pruebas lector</title>
+<style>body{font:14px system-ui;padding:12px;background:#fff;color:#111}pre{white-space:pre-wrap;font-size:12px}.ok{color:green}.ko{color:#c00}canvas{max-width:300px;border:1px solid #ccc}</style>
+</head><body>
+<h3>Pruebas del lector de facturas</h3>
+<div id="out"></div>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="../js/lector.js"></script>
+<script>
+const out = document.getElementById('out');
+const log = (html) => { out.insertAdjacentHTML('beforeend', html); };
+const resultados = [];
+function check(nombre, r, esperado) {
+  const fallos = Object.entries(esperado).filter(([k, v]) => r[k] !== v).map(([k, v]) => `${k}: esperado ${JSON.stringify(v)}, obtuvo ${JSON.stringify(r[k])}`);
+  resultados.push({ nombre, ok: !fallos.length, fallos });
+  log(`<p class="${fallos.length ? 'ko' : 'ok'}"><b>${fallos.length ? '✗' : '✓'} ${nombre}</b> ${fallos.join(' | ')}</p><pre>${JSON.stringify({ ...r, texto: undefined }, null, 0)}</pre>`);
+}
+const L = window.LectorFacturas;
+
+// ---------- 1. Parseo de texto ----------
+check('Tiquete supermercado', L.parsearTexto(`ALMACENES EXITO S.A.
+NIT 890.900.608-9
+Factura electrónica de venta No. FE 123456
+Fecha: 14/11/2026 18:32
+LECHE ENTERA 1L          4.950
+PAN TAJADO              7.800
+SUBTOTAL               52.100
+TOTAL IVA               3.420
+TOTAL A PAGAR         $ 55.520
+EFECTIVO              60.000
+CAMBIO                 4.480`), { monto: 55520, fecha: '2026-11-14', proveedor: 'Éxito', categoria: 'Alimentación', nit: '890.900.608-9' });
+
+check('Recibo de servicios', L.parsearTexto(`EMPRESAS PUBLICAS DE MEDELLIN E.S.P.
+EPM
+Fecha de expedición: 3 de noviembre de 2026
+Fecha límite de pago: 20/11/2026
+Energía     98.300
+Acueducto   45.210
+Valor total a pagar $ 187.650,00`), { monto: 187650, fecha: '2026-11-03', proveedor: 'EPM', categoria: 'Servicios' });
+
+check('Gasolina con decimales US', L.parsearTexto(`ESTACION DE SERVICIO LA 80
+Terpel
+2026-11-10
+Galones 8.5
+Total 125,000.00
+Tarjeta crédito Visa ****1234`), { monto: 125000, fecha: '2026-11-10', proveedor: 'Terpel', categoria: 'Transporte', metodo_pago: 'Crédito' });
+
+check('Proveedor conocido del historial', L.parsearTexto(`Panaderia La Espiga
+Calle 10 # 20-30
+Fecha 05-11-2026
+TOTAL 18.500`, ['La Espiga']), { monto: 18500, fecha: '2026-11-05', proveedor: 'La Espiga' });
+
+check('Proveedor desconocido (1ª línea)', L.parsearTexto(`FERRETERIA EL TORNILLO SAS
+NIT 900123456-1
+Fecha: 01/11/2026
+Total $ 42.300`), { monto: 42300, proveedor: 'Ferreteria El Tornillo SAS', categoria: 'Hogar' });
+
+check('QR DIAN', L.parsearQR(`NumFac: SETP990000002
+FecFac: 2026-11-12
+HorFac: 10:15:00-05:00
+NitFac: 900373115
+DocAdq: 1020304050
+ValFac: 100000.00
+ValIva: 19000.00
+ValOtroIm: 0.00
+ValTolFac: 119000.00
+CUFE: 8bb918b19ba22a694f1da11c643b5e9de39adf60311cf179179e9b33381030bcd4c3c3f156c506ed5908f9276f5bd9b4
+QRCode: https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=8bb918b19ba22a694f1da11c643b5e9de39adf60311cf179179e9b33381030bcd4c3c3f156c506ed5908f9276f5bd9b4`),
+  { monto: 119000, fecha: '2026-11-12', numero: 'SETP990000002', nit: '900.373.115' });
+
+// ---------- 2. Imagen con QR + OCR ----------
+function facturaCanvas({ conQR }) {
+  const cv = document.createElement('canvas'); cv.width = 800; cv.height = 1100;
+  const c = cv.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, 800, 1100); c.fillStyle = '#111';
+  const lineas = [['bold 40px Arial', 'DROGUERIA SAN JORGE'], ['24px Arial', 'NIT 901.234.567-8'], ['24px Arial', 'Factura de venta No. DSJ-4521'],
+    ['24px Arial', 'Fecha: 08/11/2026'], ['24px Arial', ''], ['24px Arial', 'Acetaminofen 500mg      12.400'], ['24px Arial', 'Vitamina C              28.900'],
+    ['24px Arial', 'Subtotal                 41.300'], ['bold 30px Arial', 'TOTAL A PAGAR  $ 41.300'], ['24px Arial', 'Pago: Nequi']];
+  let y = 70; for (const [f, t] of lineas) { c.font = f; c.fillText(t, 60, y); y += 52; }
+  if (conQR) {
+    const q = qrcode(0, 'M');
+    q.addData('NumFac: DSJ4521\nFecFac: 2026-11-08\nNitFac: 901234567\nValFac: 41300.00\nValIva: 0.00\nValOtroIm: 0.00\nValTolFac: 41300.00\nCUFE: abc123');
+    q.make();
+    const n = q.getModuleCount(), s = 7, x0 = 250, y0 = 700;
+    c.fillStyle = '#fff'; c.fillRect(x0 - 28, y0 - 28, n * s + 56, n * s + 56); c.fillStyle = '#000';
+    for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) c.fillRect(x0 + k * s, y0 + r * s, s, s);
+  }
+  return cv;
+}
+const aFile = (cv, nombre) => new Promise((ok) => cv.toBlob((b) => ok(new File([b], nombre, { type: 'image/jpeg' })), 'image/jpeg', 0.9));
+
+// ---------- 3. PDF con texto ----------
+function pdfSimple(lineas) {
+  const esc = (s) => s.replace(/[\\()]/g, '\\$&');
+  const contenido = 'BT /F1 14 Tf 50 780 Td 18 TL\n' + lineas.map((l) => `(${esc(l)}) '`).join('\n') + '\nET';
+  const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${contenido.length} >>\nstream\n${contenido}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'];
+  let pdf = '%PDF-1.4\n'; const offs = [];
+  objs.forEach((o, i) => { offs.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('') +
+    `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new File([pdf], 'factura.pdf', { type: 'application/pdf' });
+}
+
+(async () => {
+  const t0 = performance.now();
+  const pdf = pdfSimple(['CLARO COLOMBIA S.A.', 'NIT 800.153.993-7', 'Factura No. CL-998877', 'Fecha de emision: 02/11/2026',
+    'Fecha limite de pago: 18/11/2026', 'Plan Hogar Internet 300 Mb   95.900', 'IVA                          18.221', 'Total a pagar   $ 114.121']);
+  check('PDF con texto', await L.analizar(pdf, { progreso: () => {} }), { monto: 114121, fecha: '2026-11-02', proveedor: 'Claro', categoria: 'Servicios', numero: 'CL-998877' });
+
+  const cvQR = facturaCanvas({ conQR: true });
+  log(''); out.appendChild(cvQR);
+  check('Foto con QR DIAN', await L.analizar(await aFile(cvQR, 'qr.jpg'), { progreso: () => {} }), { monto: 41300, fecha: '2026-11-08', numero: 'DSJ4521' });
+
+  const cvOCR = facturaCanvas({ conQR: false });
+  check('Foto solo OCR', await L.analizar(await aFile(cvOCR, 'ocr.jpg'), { progreso: () => {} }), { monto: 41300, fecha: '2026-11-08', categoria: 'Salud', metodo_pago: 'Nequi' });
+
+  window.__RESULTADOS = { resultados, segundos: ((performance.now() - t0) / 1000).toFixed(1) };
+  log(`<h3>${resultados.filter((r) => r.ok).length}/${resultados.length} OK — ${window.__RESULTADOS.segundos}s</h3>`);
+})().catch((e) => { window.__RESULTADOS = { error: String(e) }; log(`<p class="ko">ERROR ${e}</p>`); });
+</script></body></html>

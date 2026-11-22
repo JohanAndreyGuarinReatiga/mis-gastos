@@ -126,6 +126,22 @@
         <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
       </header>
       <div class="sheet-body">
+        <div class="field">
+          <span class="field-label">Factura (foto o PDF) — se lee automáticamente</span>
+          <div class="row">
+            <label class="btn btn-file">📷 Tomar foto
+              <input type="file" accept="image/*" capture="environment" id="in-camara" hidden>
+            </label>
+            <label class="btn btn-file">📎 Subir archivo
+              <input type="file" accept="image/*,application/pdf" multiple id="in-archivo" hidden>
+            </label>
+          </div>
+          <div class="adj-grid" id="form-adjuntos"></div>
+          <div class="auto-banner" id="auto-banner" hidden>
+            <span class="auto-msg" id="auto-msg"></span>
+            <button class="btn btn-sm" type="button" id="btn-leer">✨ Leer factura</button>
+          </div>
+        </div>
         <label class="monto-field">Monto (COP)
           <input type="text" name="monto" inputmode="numeric" autocomplete="off" placeholder="$ 0" required>
         </label>
@@ -146,18 +162,6 @@
         <label>Descripción
           <textarea name="descripcion" rows="2" placeholder="Opcional"></textarea>
         </label>
-        <div class="field">
-          <span class="field-label">Facturas (fotos o PDF)</span>
-          <div class="row">
-            <label class="btn btn-file">📷 Tomar foto
-              <input type="file" accept="image/*" capture="environment" id="in-camara" hidden>
-            </label>
-            <label class="btn btn-file">📎 Subir archivo
-              <input type="file" accept="image/*,application/pdf" multiple id="in-archivo" hidden>
-            </label>
-          </div>
-          <div class="adj-grid" id="form-adjuntos"></div>
-        </div>
       </div>
       <footer class="sheet-foot">
         <button class="btn" type="button" data-close>Cancelar</button>
@@ -214,6 +218,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="js/config.js"></script>
+  <script src="js/lector.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
