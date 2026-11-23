@@ -32,7 +32,7 @@
   const pad = (n) => String(n).padStart(2, '0');
 
   /** "1.234.567,50" | "1,234,567.50" | "$ 119000" | "119000.00" -> 1234568 */
-  function aNumero(txt) {
+  function aNumero(txt, decimales = false) {
     let s = String(txt).replace(/[^\d.,]/g, '');
     if (!s) return null;
     if (/^\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
@@ -42,14 +42,25 @@
     else if (/^\d+$/.test(s)) { /* entero */ }
     else s = s.replace(/[.,](?=\d{3}(\D|$))/g, '').replace(',', '.');
     const n = Number(s);
-    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return decimales ? Math.round(n * 100) / 100 : Math.round(n);
   }
 
   const RE_MONTO = /\$?\s?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\$?\s?\d{3,}(?:[.,]\d{1,2})?/g;
-  function montosEn(linea) {
-    return (linea.match(RE_MONTO) || [])
-      .map((m) => ({ txt: m, n: aNumero(m), conPeso: m.includes('$') }))
-      .filter((x) => x.n && x.n >= 50 && x.n < 1e11);
+  // En dólares también hay montos cortos con centavos: "$9.99", "USD 12,50".
+  const RE_MONTO_USD = /\$?\s?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\$?\s?\d+[.,]\d{2}(?!\d)|\$?\s?\d{2,}(?![.,]?\d)/g;
+  function montosEn(linea, usd = false) {
+    return (linea.match(usd ? RE_MONTO_USD : RE_MONTO) || [])
+      .map((m) => ({ txt: m, n: aNumero(m, usd), conPeso: m.includes('$') }))
+      .filter((x) => x.n && (usd ? x.n >= 0.5 && x.n < 1e7 : x.n >= 50 && x.n < 1e11));
+  }
+
+  /** ¿La factura está en dólares? Marcas explícitas (USD, US$) o factura en inglés. */
+  function esUSD(nTexto) {
+    if (/\busd\b|us\s?\$|u\$s|\bdolares\b|\bdollars?\b/.test(nTexto)) return true;
+    const ingles = (nTexto.match(/\b(invoice|receipt|amount due|total due|order total|subtotal|sales tax|billed to|bill to|paid|payment|thank you|description|qty|quantity)\b/g) || []).length;
+    const espanol = /factura|\bnit\b|\biva\b|valor|pagar|fecha/.test(nTexto);
+    return ingles >= 3 && !espanol;
   }
 
   // ---------- Fechas ----------
@@ -70,6 +81,10 @@
     for (const m of l.matchAll(/(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](\d{4}|\d{2})(?!\d)/g)) {
       // En Colombia el formato es día/mes/año; si el "mes" > 12 probamos mes/día.
       out.push(fechaValida(+m[3], +m[2], +m[1]) || fechaValida(+m[3], +m[1], +m[2]));
+    }
+    // Inglés: "Nov 20, 2026" / "November 20 2026"
+    for (const m of l.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/g)) {
+      out.push(fechaValida(+m[3], MESES[m[1]], +m[2]));
     }
     for (const m of l.matchAll(/(\d{1,2})\s*(?:de\s*|-|\/|\.)?\s*(ene|feb|mar|abr|may|jun|jul|ago|sep|set|oct|nov|dic|jan|apr|aug|dec)[a-z]*\.?\s*(?:de\s*|del\s*|-|\/|\.)?\s*(\d{4})/g)) {
       out.push(fechaValida(+m[3], MESES[m[2]], +m[1]));
@@ -121,12 +136,14 @@
     const lineas = String(texto || '').split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const res = {};
     const nTexto = norm(texto);
+    const usd = esUSD(nTexto);
+    if (usd) res.moneda = 'USD';
 
     // Monto total
     let mejor = null;
-    const EXCLUIR = /sub\s*-?\s*total|total\s*(iva|impuesto|imp\b|descuento|dcto|items|articulos|unidades|cantidad|bolsa|base|retenc)|base\s*grav|cambio|efectivo\s*recibido|recibido|nit|tel|resoluci|cufe|autoriz|rango|desde|hasta/;
+    const EXCLUIR = /sub\s*-?\s*total|total\s*(iva|impuesto|imp\b|descuento|dcto|items|articulos|unidades|cantidad|bolsa|base|retenc)|base\s*grav|cambio|efectivo\s*recibido|recibido|nit|tel|resoluci|cufe|autoriz|rango|desde|hasta|\btax\b|\btip\b|\bchange\b|\btrm\b|tasa de cambio/;
     const reglas = [
-      [3, /total\s*a\s*pagar|neto\s*a\s*pagar|valor\s*a\s*pagar|total\s*factura|valor\s*total|total\s*neto|gran\s*total|total\s*pagado|total\s*venta|vr\.?\s*total|valor\s*factura/],
+      [3, /total\s*a\s*pagar|neto\s*a\s*pagar|valor\s*a\s*pagar|total\s*factura|valor\s*total|total\s*neto|gran\s*total|total\s*pagado|total\s*venta|vr\.?\s*total|valor\s*factura|amount\s*due|total\s*due|balance\s*due|order\s*total|amount\s*paid|total\s*charged/],
       [2, /\btotal\b|\btotai\b|\bt0tal\b/],
       [1, /a\s*pagar|importe|valor\b/],
     ];
@@ -135,15 +152,15 @@
       if (EXCLUIR.test(n)) return;
       const regla = reglas.find(([, re]) => re.test(n));
       if (!regla) return;
-      let ms = montosEn(l);
-      if (!ms.length && lineas[i + 1]) ms = montosEn(lineas[i + 1]);
+      let ms = montosEn(l, usd);
+      if (!ms.length && lineas[i + 1]) ms = montosEn(lineas[i + 1], usd);
       if (!ms.length) return;
       const m = ms[ms.length - 1];
       const cand = { n: m.n, score: regla[0] };
       if (!mejor || cand.score > mejor.score || (cand.score === mejor.score && cand.n > mejor.n)) mejor = cand;
     });
     if (!mejor) {
-      const todos = lineas.filter((l) => !EXCLUIR.test(norm(l))).flatMap(montosEn);
+      const todos = lineas.filter((l) => !EXCLUIR.test(norm(l))).flatMap((l) => montosEn(l, usd));
       const conPeso = todos.filter((m) => m.conPeso);
       const pool = conPeso.length ? conPeso : todos.filter((m) => m.n < 1e8);
       if (pool.length) mejor = { n: Math.max(...pool.map((m) => m.n)), score: 0 };
@@ -196,32 +213,34 @@
     const pago = PISTAS_PAGO.find(([, re]) => re.test(nTexto));
     if (pago) res.metodo_pago = pago[0];
 
-    const items = parsearItems(lineas);
+    const items = parsearItems(lineas, usd);
     if (items.length) res.items = items;
 
     return res;
   }
 
   /** Productos: líneas "descripción ... valor" antes del subtotal/total. */
-  function parsearItems(lineas) {
-    const FIN = /^(sub\s*-?\s*total|total|valor\s*total|neto|gran\s*total|base\s*grav|forma\s*de\s*pago|medio\s*de\s*pago)/;
-    const NO_ITEM = /\biva\b|impuesto|imp\.?\s*consumo|descuento|dcto|propina|cambio|efectivo|recibido|tarjeta|nequi|daviplata|saldo|nit\b|n\.i\.t|tel[eé:.]|fecha|factura|resoluci|cufe|autoriz|cajer|caja\b|cliente|direcc|calle|carrera|régimen|regimen|responsable|pagina|página|hora|vence|limite|límite|valor a pagar|total/i;
+  function parsearItems(lineas, usd = false) {
+    const FIN = /^(sub\s*-?\s*total|total|amount\s*due|valor\s*total|neto|gran\s*total|base\s*grav|forma\s*de\s*pago|medio\s*de\s*pago)/;
+    const NO_ITEM = /\biva\b|impuesto|imp\.?\s*consumo|descuento|dcto|propina|cambio|efectivo|recibido|tarjeta|nequi|daviplata|saldo|nit\b|n\.i\.t|tel[eé:.]|fecha|factura|resoluci|cufe|autoriz|cajer|caja\b|cliente|direcc|calle|carrera|régimen|regimen|responsable|pagina|página|hora|vence|limite|límite|valor a pagar|total|\btax\b|invoice|receipt|\bdate\b/i;
     const items = [];
     for (const l of lineas) {
       const n = norm(l);
       if (FIN.test(n)) break;
       if (NO_ITEM.test(n)) continue;
       // [cantidad] descripción ... valor [letra de impuesto]
-      const m = /^(?:(\d{1,3}(?:[.,]\d{1,3})?)\s*(?:x|un|und|uds?|kg|lb)?\s+)?(.*?\p{L}.*?)\s+\$?\s?(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d{3,}(?:[.,]\d{2})?)\s*[A-Z*]?$/iu.exec(l);
+      const m = (usd
+        ? /^(?:(\d{1,3}(?:[.,]\d{1,3})?)\s*(?:x|un|und|uds?|kg|lb)?\s+)?(.*?\p{L}.*?)\s+(?:US)?\$?\s?(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d+[.,]\d{2})\s*[A-Z*]?$/iu
+        : /^(?:(\d{1,3}(?:[.,]\d{1,3})?)\s*(?:x|un|und|uds?|kg|lb)?\s+)?(.*?\p{L}.*?)\s+\$?\s?(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d{3,}(?:[.,]\d{2})?)\s*[A-Z*]?$/iu).exec(l);
       if (!m) continue;
-      const valor = aNumero(m[3]);
+      const valor = aNumero(m[3], usd);
       let desc = m[2].replace(/^\d{6,}\s+/, '').replace(/\s{2,}/g, ' ').replace(/[\s.:$-]+$/, '').trim();
       // "2 x 4.950" al final de la descripción: cantidad × unitario
       let cantidad = m[1] ? Number(m[1].replace(',', '.')) : 1;
       const xu = /\s(\d{1,3})\s*[xX*]\s*\$?\s?[\d.,]+$/.exec(desc);
       if (xu) { cantidad = Number(xu[1]); desc = desc.slice(0, xu.index).trim(); }
       const letras = (desc.match(/\p{L}/gu) || []).length;
-      if (!valor || valor < 50 || letras < 3 || desc.length > 60) continue;
+      if (!valor || valor < (usd ? 0.5 : 50) || letras < 3 || desc.length > 60) continue;
       items.push({ descripcion: titulo(desc), cantidad: Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1, valor });
     }
     return items.slice(0, 60);
@@ -388,7 +407,9 @@
 
     const deTexto = parsearTexto(texto, opts.conocidos || []);
     // Los datos del QR son exactos: tienen prioridad sobre el texto.
-    return { ...deTexto, ...(qr || {}), fuentes, texto };
+    const r = { ...deTexto, ...(qr || {}), fuentes, texto };
+    if (qr?.monto) delete r.moneda; // la factura electrónica DIAN va en pesos
+    return r;
   }
 
   /** pdf.js listo para usar (lo reutiliza el visor de la app). */
@@ -398,5 +419,5 @@
     return window.pdfjsLib;
   }
 
-  window.LectorFacturas = { analizar, parsearTexto, parsearQR, parsearItems, aNumero, pdfjs, cargar };
+  window.LectorFacturas = { analizar, parsearTexto, parsearQR, parsearItems, aNumero, esUSD, pdfjs, cargar };
 })();

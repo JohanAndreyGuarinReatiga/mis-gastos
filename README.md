@@ -17,6 +17,7 @@ las facturas en foto o PDF de cada uno.
   3. **OCR en español** (Tesseract.js) para fotos de tiquetes y facturas en papel.
 
   Todo corre en el navegador: las facturas no se envían a ningún servicio externo. Los campos que ya escribiste no se sobrescriben, y la categoría se aprende de tus gastos anteriores con el mismo proveedor.
+- **Gastos en dólares 💵:** con el selector **COP / USD** se escribe el monto en dólares y la app lo convierte a pesos con la **TRM oficial vigente en la fecha del pago** (datos.gov.co, Superintendencia Financiera). Los fines de semana y festivos usa la TRM vigente ese día. Si tu banco cobró con otra tasa, la puedes cambiar. Se guardan el valor en USD y la tasa usada; los totales, gráficos y exportaciones van en pesos, y el Excel y el CSV agregan las columnas "Monto USD" y "TRM". Las facturas en dólares (con "USD" o "US$", o recibos en inglés) se detectan solas al leerlas.
 - **Visor integrado:** las fotos y los PDF se ven dentro de la app, a pantalla completa, con zoom, todas las páginas del PDF, flechas o deslizamiento para pasar de una factura a otra, y botón de descarga. Los PDF muestran una miniatura de su primera página.
 - **Productos del gasto:** cada gasto puede tener su lista de productos (cantidad y valor), que se llena sola al leer la factura o se edita a mano. Se muestra la suma y si cuadra con el monto. En la lista de gastos aparece como un desplegable oculto, "▸ N productos".
 - **Facturas repetidas ⚠️:** si un gasto coincide con uno ya registrado, la app avisa en el formulario y otra vez antes de guardar, con un enlace al gasto existente para revisarlo. Cuenta como coincidencia:
@@ -53,7 +54,7 @@ las facturas en foto o PDF de cada uno.
    y marca **Auto Confirm User**.
 3. **Cerrar registros:** ve a **Authentication → Sign In / Providers** y desactiva **Allow new users to sign up**,
    para que nadie más pueda crear cuenta.
-4. **Actualizaciones de la base de datos:** si tu base se creó con una versión anterior, ejecuta en el SQL Editor los archivos de [`supabase/migraciones/`](supabase/migraciones) que falten. Por ejemplo, `002_productos.sql` agrega la lista de productos, `003_entretenimiento_y_repetidos.sql` agrega la categoría Entretenimiento y los datos para detectar facturas repetidas, y `004_historial_y_archivo.sql` agrega el historial de descargas y el archivado.
+4. **Actualizaciones de la base de datos:** si tu base se creó con una versión anterior, ejecuta en el SQL Editor los archivos de [`supabase/migraciones/`](supabase/migraciones) que falten. Por ejemplo, `002_productos.sql` agrega la lista de productos, `003_entretenimiento_y_repetidos.sql` agrega la categoría Entretenimiento y los datos para detectar facturas repetidas, `004_historial_y_archivo.sql` agrega el historial de descargas y el archivado, y `005_moneda_usd.sql` agrega los gastos en dólares.
 5. La URL del proyecto y la *publishable key* están en [`js/config.js`](js/config.js).
 
 ## Probar en local

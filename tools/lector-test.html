@@ -45,6 +45,19 @@ Galones 8.5
 Total 125,000.00
 Tarjeta crédito Visa ****1234`), { monto: 125000, fecha: '2026-11-10', proveedor: 'Terpel', categoria: 'Transporte', metodo_pago: 'Crédito' });
 
+check('Recibo en dólares (inglés)', L.parsearTexto(`Netflix, Inc.
+Receipt
+Date: Nov 20, 2026
+Description Amount
+Premium plan $22.99
+Sales tax $1.84
+Total due $24.83
+Paid with Visa •••• 4242`), { moneda: 'USD', monto: 24.83, fecha: '2026-11-20', proveedor: 'Netflix', categoria: 'Entretenimiento', metodo_pago: 'Crédito' });
+
+check('Pedido con USD explícito', L.parsearTexto(`AMAZON.COM
+Order total: USD 1,234.56
+Order date: November 3, 2026`), { moneda: 'USD', monto: 1234.56, fecha: '2026-11-03', proveedor: 'Amazon' });
+
 check('Proveedor conocido del historial', L.parsearTexto(`Panaderia La Espiga
 Calle 10 # 20-30
 Fecha 05-11-2026

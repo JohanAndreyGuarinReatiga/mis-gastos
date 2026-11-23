@@ -1,6 +1,6 @@
 // Service worker: permite instalar la app y abrirla aunque la red esté lenta.
 // Estrategia "red primero": siempre intenta la versión más nueva y usa la caché solo sin conexión.
-const CACHE = 'mis-gastos-v7';
+const CACHE = 'mis-gastos-v8';
 const SHELL = ['./', 'index.html', 'css/styles.css', 'js/config.js', 'js/lector.js', 'js/compresor.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -18,6 +18,8 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   // Nunca cachear datos ni archivos de Supabase (son privados).
   if (url.hostname.endsWith('supabase.co')) return;
+  // Las tasas de cambio (currency-api) no se cachean: deben ser las del día consultado.
+  if (url.pathname.includes('currency-api')) return;
   const cacheable = url.origin === self.location.origin || url.hostname === 'cdn.jsdelivr.net';
   if (!cacheable) return;
   e.respondWith(

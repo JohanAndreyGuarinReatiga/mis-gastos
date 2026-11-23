@@ -197,9 +197,23 @@
             <button class="btn btn-sm" type="button" id="btn-leer">✨ Leer factura</button>
           </div>
         </div>
-        <label class="monto-field">Monto (COP)
-          <input type="text" name="monto" inputmode="numeric" autocomplete="off" placeholder="$ 0" required>
-        </label>
+        <div class="monto-field">
+          <div class="monto-cab">
+            <span class="field-label" id="monto-label">Monto (COP)</span>
+            <div class="segmentado seg-moneda" id="seg-moneda" role="radiogroup" aria-label="Moneda">
+              <button type="button" data-moneda="COP" role="radio" aria-checked="true">COP</button>
+              <button type="button" data-moneda="USD" role="radio" aria-checked="false">USD</button>
+            </div>
+          </div>
+          <input type="text" name="monto" inputmode="numeric" autocomplete="off" placeholder="$ 0" required aria-labelledby="monto-label">
+          <div class="conversion" id="conversion" hidden>
+            <div class="conv-total" id="conv-total">≈ $ 0</div>
+            <label class="conv-trm"><span>TRM del <span id="conv-fecha"></span></span>
+              <input type="text" name="tasa" inputmode="decimal" autocomplete="off" placeholder="Buscando…" aria-label="TRM (pesos por dólar)">
+            </label>
+            <div class="muted small" id="conv-nota"></div>
+          </div>
+        </div>
         <div class="field">
           <span class="field-label">Categoría</span>
           <div class="chips" id="form-cats"></div>

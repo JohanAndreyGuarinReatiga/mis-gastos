@@ -504,3 +504,17 @@ dialog.visor::backdrop { background: #000; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Moneda: COP / USD con conversión por TRM */
+.monto-field { display: flex; flex-direction: column; gap: 6px; }
+.monto-cab { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.monto-cab .field-label { margin: 0; }
+.seg-moneda { margin-top: 0; width: 132px; flex: 0 0 auto; }
+.conversion { background: var(--primary-soft); border-radius: 14px; padding: 12px 14px; display: grid; gap: 6px; }
+.conv-total { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.3px; }
+.conv-total small { font-size: 13px; font-weight: 500; color: var(--muted); }
+.conv-trm { display: flex; flex-direction: row; text-transform: none; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; color: var(--muted); margin: 0; }
+.conv-trm input { width: 9.5em; flex: 0 0 auto; min-height: 36px; padding: 6px 10px; font-size: 16px; background: var(--surface); }
+.conversion.err { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.monto-usd { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.det-conv { text-align: center; color: var(--muted); font-size: 15px; margin: 2px 0 8px; font-variant-numeric: tabular-nums; }

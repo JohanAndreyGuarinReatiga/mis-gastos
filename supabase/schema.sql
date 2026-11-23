@@ -130,3 +130,11 @@ create policy "exportaciones propias" on public.exportaciones
   with check (user_id = (select auth.uid()));
 alter table public.gastos add column if not exists archivado_en timestamptz;
 alter table public.gastos add column if not exists archivo_respaldo text;
+
+-- Gastos en dólares (monto sigue en COP; aquí el valor original y la TRM usada)
+alter table public.gastos add column if not exists moneda text not null default 'COP';
+alter table public.gastos add column if not exists monto_original numeric(14,2);
+alter table public.gastos add column if not exists tasa_cambio numeric(12,4);
+do $$ begin
+  alter table public.gastos add constraint gastos_moneda_chk check (moneda in ('COP', 'USD'));
+exception when duplicate_object then null; end $$;

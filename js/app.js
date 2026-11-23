@@ -45,6 +45,75 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } },
   };
 
+  // ---------- Dólares y TRM ----------
+  const fmt2 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtUSD = (n) => `US$ ${fmt2.format(Number(n) || 0)}`;
+  const fmtTRM = (n) => `$ ${fmt2.format(Number(n) || 0)}`;
+  /** "1.234,56" | "1,234.56" | "12.5" | "12,50" | "1.234" -> número (con decimales) */
+  function aDecimal(txt) {
+    let s = String(txt || '').replace(/[^\d.,]/g, '');
+    if (!s) return 0;
+    const ultimo = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
+    if (ultimo >= 0) {
+      const sep = s[ultimo];
+      const otros = s.split(sep).length - 1;
+      const tras = s.length - ultimo - 1;
+      // Es decimal si hay ambos separadores, o si aparece una sola vez con 1–2 dígitos (o hasta 4 en una tasa) detrás.
+      const ambos = s.includes('.') && s.includes(',');
+      const esDecimal = ambos || (otros === 1 && tras !== 3) || (otros === 1 && tras === 3 && /^0[.,]/.test(s));
+      s = esDecimal ? `${s.slice(0, ultimo).replace(/[.,]/g, '')}.${s.slice(ultimo + 1)}` : s.replace(/[.,]/g, '');
+    }
+    const n = Number(s);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  /**
+   * TRM (pesos por dólar) vigente en una fecha "AAAA-MM-DD".
+   * 1) TRM oficial publicada en datos.gov.co (Superintendencia Financiera).
+   * 2) Respaldo: tasa de mercado diaria del paquete abierto currency-api.
+   * @returns {Promise<{valor:number, desde:string, fuente:string}>}
+   */
+  async function obtenerTRM(fecha) {
+    const clave = `trm:${fecha}`;
+    const guardada = store.get(clave);
+    if (guardada) { try { return JSON.parse(guardada); } catch { /* recalcular */ } }
+    const conTiempo = async (url) => {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 9000);
+      try {
+        const r = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return await r.json();
+      } finally { clearTimeout(t); }
+    };
+    let res = null;
+    try {
+      const q = new URLSearchParams({
+        $select: 'valor,vigenciadesde',
+        $where: `vigenciadesde <= '${fecha}T00:00:00'`,
+        $order: 'vigenciadesde DESC',
+        $limit: '1',
+      });
+      const [d] = await conTiempo(`https://www.datos.gov.co/resource/32sa-8pi3.json?${q}`);
+      if (d && Number(d.valor) > 0) res = { valor: Number(d.valor), desde: d.vigenciadesde.slice(0, 10), fuente: 'TRM oficial' };
+    } catch (e) { console.warn('TRM oficial', e); }
+    if (!res) {
+      for (const url of [
+        `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${fecha}/v1/currencies/usd.min.json`,
+        `https://${fecha}.currency-api.pages.dev/v1/currencies/usd.min.json`,
+      ]) {
+        try {
+          const d = await conTiempo(url);
+          if (d?.usd?.cop > 0) { res = { valor: Math.round(d.usd.cop * 100) / 100, desde: d.date || fecha, fuente: 'tasa de mercado (aprox.)' }; break; }
+        } catch (e) { console.warn('Tasa de respaldo', e); }
+      }
+    }
+    if (!res) throw new Error('sin conexión con las fuentes de la TRM');
+    // Solo se guarda si es la oficial de ese mismo día o de una fecha pasada (ya no cambia).
+    if (res.fuente === 'TRM oficial' && fecha < ymd(new Date())) store.set(clave, JSON.stringify(res));
+    return res;
+  }
+
   let toastT;
   function toast(msg, err = false) {
     const t = $('#toast');
@@ -148,7 +217,17 @@
       todos.push(...data);
       if (data.length < paso) break;
     }
-    S.gastos = todos.map((g) => ({ ...g, monto: Number(g.monto) }));
+    S.gastos = todos.map((g) => ({
+      ...g,
+      monto: Number(g.monto),
+      monto_original: g.monto_original == null ? null : Number(g.monto_original),
+      tasa_cambio: g.tasa_cambio == null ? null : Number(g.tasa_cambio),
+    }));
+    // S.v5: la base ya tiene la migración 005 (moneda, monto original y TRM).
+    if (S.v5 === undefined) {
+      if (todos.length) S.v5 = 'moneda' in todos[0];
+      else S.v5 = !(await sb.from('gastos').select('moneda').limit(1)).error;
+    }
     calcularRepetidos();
   }
 
@@ -260,7 +339,7 @@
       <div class="item" data-id="${g.id}">
         <span class="item-ico" style="background:${esc(c.color)}22">${esc(c.icono)}</span>
         <div class="item-main"><div class="item-title">${esc(titulo)}</div><div class="item-sub">${S.repetidos?.has(g.id) ? '<span class="badge-rep">⚠️ repetido</span> ' : ''}${esc(sub)}</div></div>
-        <div class="item-amount">${fmt(g.monto)}<small>${nAdj ? `📎 ${nAdj}` : g.archivado_en ? '📦 archivada' : 'sin factura'}</small></div>
+        <div class="item-amount">${fmt(g.monto)}${g.moneda === 'USD' && g.monto_original ? `<span class="monto-usd">${fmtUSD(g.monto_original)}</span>` : ''}<small>${nAdj ? `📎 ${nAdj}` : g.archivado_en ? '📦 archivada' : 'sin factura'}</small></div>
       </div>
       ${items.length ? `<details class="prod-toggle"><summary>${items.length} producto${items.length === 1 ? '' : 's'}</summary>${prodsHTML(items)}</details>` : ''}
     </li>`;
@@ -403,6 +482,7 @@
       ${soloVer ? '<p class="muted small">Gasto ya registrado (solo lectura). Cierra para volver al formulario.</p>' : ''}
       ${rep.length ? avisoRepetidoHTML(rep, '⚠️ Este gasto parece repetido de:') : ''}
       <div class="det-monto">${fmt(g.monto)}</div>
+      ${g.moneda === 'USD' && g.monto_original ? `<p class="det-conv">💵 ${fmtUSD(g.monto_original)} × TRM ${fmtTRM(g.tasa_cambio)}</p>` : ''}
       <dl class="det-rows">
         <dt>Categoría</dt><dd>${esc(c.icono)} ${esc(c.nombre)}</dd>
         <dt>Fecha</dt><dd>${esc(fechaLarga(g.fecha))}</dd>
@@ -601,9 +681,99 @@
   fG.metodo_pago.innerHTML = '<option value="">—</option>' + CFG.METODOS_PAGO.map((m) => `<option>${esc(m)}</option>`).join('');
 
   fG.monto.addEventListener('input', () => {
-    const d = digitos(fG.monto.value).slice(0, 13);
-    fG.monto.value = d ? `$ ${fmtNum.format(Number(d))}` : '';
+    if (S.edit?.moneda === 'USD') {
+      // Mientras se escribe solo se limpia; al salir del campo se le da formato.
+      const s = fG.monto.value.replace(/[^\d.,]/g, '').slice(0, 14);
+      fG.monto.value = s ? `US$ ${s}` : '';
+    } else {
+      const d = digitos(fG.monto.value).slice(0, 13);
+      fG.monto.value = d ? `$ ${fmtNum.format(Number(d))}` : '';
+    }
+    pintarConversion();
   });
+  fG.monto.addEventListener('blur', () => {
+    if (S.edit?.moneda === 'USD' && aDecimal(fG.monto.value)) fG.monto.value = fmtUSD(aDecimal(fG.monto.value));
+  });
+
+  // ---------- Moneda (COP / USD) ----------
+  /** Monto en la moneda elegida (USD con decimales). */
+  const montoOriginal = () => (S.edit?.moneda === 'USD' ? Math.round(aDecimal(fG.monto.value) * 100) / 100 : Number(digitos(fG.monto.value)));
+  /** Monto en pesos: lo que se guarda en "monto" y suma en todos los totales. */
+  const montoCOP = () => (S.edit?.moneda === 'USD' ? (S.edit.tasa ? Math.round(montoOriginal() * S.edit.tasa) : 0) : montoOriginal());
+
+  function setMoneda(m) {
+    const E = S.edit;
+    if (!E || E.moneda === m) return;
+    const antes = montoOriginal();
+    E.moneda = m;
+    const usd = m === 'USD';
+    $$('#seg-moneda button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.moneda === m)));
+    $('#monto-label').textContent = usd ? 'Monto (USD)' : 'Monto (COP)';
+    fG.monto.placeholder = usd ? 'US$ 0,00' : '$ 0';
+    fG.monto.inputMode = usd ? 'decimal' : 'numeric';
+    // Se conserva la cifra escrita, reinterpretada en la nueva moneda.
+    fG.monto.value = !antes ? '' : usd ? fmtUSD(antes) : `$ ${fmtNum.format(Math.round(antes))}`;
+    $('#conversion').hidden = !usd;
+    if (usd) actualizarTRM(); else pintarConversion();
+  }
+
+  function pintarConversion() {
+    const E = S.edit;
+    if (E?.moneda === 'USD') {
+      const usd = montoOriginal();
+      $('#conv-total').innerHTML = !E.tasa ? (E.buscandoTRM ? 'Buscando la TRM…' : 'Escribe la TRM para convertir')
+        : usd ? `≈ ${fmt(montoCOP())} <small>COP</small>` : 'Escribe el monto en dólares';
+      $('#conv-fecha').textContent = fG.fecha.value ? fechaCorta(fG.fecha.value) + ' ' + fG.fecha.value.slice(0, 4) : '';
+    }
+    actualizarSumaProds();
+    comprobarLuego();
+  }
+
+  let turnoTRM = 0;
+  async function actualizarTRM() {
+    const E = S.edit;
+    if (!E || E.moneda !== 'USD' || E.tasaManual || !fG.fecha.value) { pintarConversion(); return; }
+    const turno = ++turnoTRM;
+    const fecha = fG.fecha.value;
+    E.buscandoTRM = true;
+    E.tasa = null;
+    fG.tasa.value = '';
+    $('#conversion').classList.remove('err');
+    $('#conv-nota').textContent = '';
+    pintarConversion();
+    try {
+      const t = await obtenerTRM(fecha);
+      if (turno !== turnoTRM || S.edit !== E || E.tasaManual) return;
+      E.tasa = t.valor;
+      fG.tasa.value = fmt2.format(t.valor);
+      $('#conv-nota').textContent = `${t.fuente}${t.desde !== fecha ? ` · vigente desde el ${fechaCorta(t.desde)}` : ''}. Si tu banco usó otra tasa, puedes cambiarla.`;
+    } catch (e) {
+      if (turno !== turnoTRM || S.edit !== E) return;
+      $('#conversion').classList.add('err');
+      $('#conv-nota').textContent = `No pude consultar la TRM (${e.message || e}). Escríbela a mano.`;
+    } finally {
+      if (turno === turnoTRM && S.edit === E) { E.buscandoTRM = false; pintarConversion(); }
+    }
+  }
+
+  $('#seg-moneda').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-moneda]');
+    if (!b || !S.edit) return;
+    S.edit.tocado.add('moneda');
+    setMoneda(b.dataset.moneda);
+  });
+  fG.fecha.addEventListener('change', () => { if (S.edit?.moneda === 'USD') { S.edit.tasaManual = false; actualizarTRM(); } });
+  fG.tasa.addEventListener('input', () => {
+    const E = S.edit;
+    if (!E) return;
+    fG.tasa.value = fG.tasa.value.replace(/[^\d.,]/g, '').slice(0, 12);
+    E.tasa = aDecimal(fG.tasa.value) || null;
+    E.tasaManual = !!fG.tasa.value;
+    $('#conversion').classList.remove('err');
+    $('#conv-nota').textContent = E.tasaManual ? 'Tasa escrita a mano. Bórrala para volver a la TRM oficial.' : '';
+    if (!E.tasaManual) actualizarTRM(); else pintarConversion();
+  });
+  fG.tasa.addEventListener('blur', () => { if (S.edit?.tasa) fG.tasa.value = fmt2.format(S.edit.tasa); });
 
   $('#nav-add').addEventListener('click', () => abrirFormulario(null));
 
@@ -622,6 +792,11 @@
       teniaItems: itemsDe(g || {}).length > 0,
       cufe: g?.cufe || null,
       repetidoAceptado: null, // ids de repetidos que el usuario decidió guardar igual
+      moneda: 'COP',
+      // Al editar un gasto en dólares se respeta la tasa guardada hasta que cambie la fecha.
+      tasa: g?.moneda === 'USD' ? g.tasa_cambio : null,
+      tasaManual: false,
+      buscandoTRM: false,
     };
     $('#form-prods').open = false;
     renderProds();
@@ -629,8 +804,22 @@
     banner(null);
     if (!S.cats.some((c) => c.id === S.edit.catId)) S.edit.catId = g ? null : S.cats[0]?.id ?? null;
     $('#form-title').textContent = g ? 'Editar gasto' : 'Nuevo gasto';
-    fG.monto.value = g ? `$ ${fmtNum.format(g.monto)}` : '';
     fG.fecha.value = g?.fecha || ymd(new Date());
+    // Moneda: se arranca en COP y, si el gasto es en dólares, se pasa a USD con su tasa.
+    S.edit.moneda = null;
+    fG.monto.value = '';
+    const enUSD = g?.moneda === 'USD' && g.monto_original;
+    if (enUSD) S.edit.tasaManual = !!g.tasa_cambio; // no consultar: ya tiene tasa
+    setMoneda(enUSD ? 'USD' : 'COP');
+    fG.monto.value = enUSD ? fmtUSD(g.monto_original) : g ? `$ ${fmtNum.format(g.monto)}` : '';
+    if (enUSD) {
+      S.edit.tasaManual = false;
+      fG.tasa.value = S.edit.tasa ? fmt2.format(S.edit.tasa) : '';
+      $('#conv-nota').textContent = S.edit.tasa ? 'Tasa guardada con este gasto. Si cambias la fecha se vuelve a consultar.' : '';
+      if (!S.edit.tasa) actualizarTRM();
+    } else $('#conv-nota').textContent = '';
+    $('#conversion').classList.remove('err');
+    pintarConversion();
     fG.metodo_pago.value = g?.metodo_pago || store.get('ultimoPago') || '';
     fG.proveedor.value = g?.proveedor || '';
     fG.descripcion.value = g?.descripcion || '';
@@ -676,8 +865,10 @@
     const n = E.items.length;
     const total = E.items.reduce((a, it) => a + (Number(it.valor) || 0), 0);
     $('#prods-resumen').textContent = n ? `${n} · ${fmt(total)}` : 'opcional';
-    const monto = Number(digitos(fG.monto.value));
-    const dif = n && monto && Math.abs(monto - total) > 1;
+    const monto = montoCOP();
+    // En dólares cada producto se convierte por separado: se toleran diferencias de redondeo.
+    const tolerancia = E.moneda === 'USD' && E.tasa ? Math.max(2, n * E.tasa * 0.01) : 1;
+    const dif = n && monto && Math.abs(monto - total) > tolerancia;
     $('#prods-suma').innerHTML = n ? `Suma: <b>${fmt(total)}</b>${dif ? ` <span class="diff">(${monto > total ? 'faltan' : 'sobran'} ${fmt(Math.abs(monto - total))})</span>` : ''}` : '';
   }
 
@@ -723,7 +914,7 @@
     return {
       id: E.id,
       fecha: fG.fecha.value,
-      monto: Number(digitos(fG.monto.value)),
+      monto: montoCOP(),
       proveedor: fG.proveedor.value,
       numero_factura: fG.numero_factura.value,
       nit: fG.nit.value,
@@ -800,7 +991,8 @@
         progreso: (m) => { if (S.edit === E) banner(m, { cargando: true }); },
       });
       if (S.edit !== E) return;
-      const llenos = aplicarLectura(E, r, forzar);
+      const llenos = await aplicarLectura(E, r, forzar);
+      if (S.edit !== E) return;
       const fuente = r.fuentes.join(' + ');
       const rep = comprobarRepetidoEnForm();
       if (rep.length) {
@@ -822,7 +1014,7 @@
     }
   }
 
-  function aplicarLectura(E, r, forzar) {
+  async function aplicarLectura(E, r, forzar) {
     const llenos = [];
     const puede = (k) => !E.tocado.has(k) || (forzar && k !== 'cat' && !fG[k]?.value);
     const poner = (k, valor, etiqueta) => {
@@ -831,16 +1023,33 @@
       fG[k].classList.add('auto');
       llenos.push(etiqueta);
     };
-    if (r.monto) poner('monto', `$ ${fmtNum.format(r.monto)}`, 'monto');
+    // Moneda: una factura en dólares cambia el formulario a USD (si el usuario no eligió otra).
+    const monedaLeida = r.moneda === 'USD' ? 'USD' : 'COP';
+    if (r.monto && monedaLeida !== E.moneda && !E.tocado.has('moneda') && puede('monto')) {
+      setMoneda(monedaLeida);
+      $('#seg-moneda').classList.add('auto');
+      if (monedaLeida === 'USD') llenos.push('moneda (USD)');
+    }
+    // El monto solo se pone si está en la moneda elegida (no mezclar dólares con pesos).
+    if (r.monto && monedaLeida === E.moneda) poner('monto', E.moneda === 'USD' ? fmtUSD(r.monto) : `$ ${fmtNum.format(r.monto)}`, 'monto');
+    const fechaAntes = fG.fecha.value;
     poner('fecha', r.fecha, 'fecha');
     poner('proveedor', r.proveedor, 'proveedor');
     poner('numero_factura', r.numero, 'n.º de factura');
     poner('nit', r.nit, 'NIT');
     if (r.cufe && !E.cufe) E.cufe = r.cufe;
     if (r.metodo_pago && CFG.METODOS_PAGO.includes(r.metodo_pago)) poner('metodo_pago', r.metodo_pago, 'método de pago');
+    if (E.moneda === 'USD') {
+      if (fG.fecha.value !== fechaAntes) E.tasaManual = false;
+      if (!E.tasa || fG.fecha.value !== fechaAntes) await actualizarTRM();
+      else pintarConversion();
+    }
 
-    if (r.items?.length && (!E.tocado.has('items') || (forzar && !itemsLimpios(E.items).length))) {
-      E.items = r.items.map((it) => ({ ...it }));
+    if (r.items?.length && (!E.tocado.has('items') || (forzar && !itemsLimpios(E.items).length))
+      && (monedaLeida === 'COP' || (E.moneda === 'USD' && E.tasa))) {
+      // Productos en dólares: se convierten a pesos con la misma TRM del gasto.
+      const k = monedaLeida === 'USD' ? E.tasa : 1;
+      E.items = r.items.map((it) => ({ ...it, valor: Math.round((Number(it.valor) || 0) * k) }));
       renderProds();
       $('#form-prods').classList.add('auto');
       llenos.push(`${r.items.length} producto${r.items.length === 1 ? '' : 's'}`);
@@ -930,8 +1139,10 @@
   fG.addEventListener('submit', async (e) => {
     e.preventDefault();
     const E = S.edit;
-    const monto = Number(digitos(fG.monto.value));
-    if (!monto) { toast('Ingresa un monto', true); fG.monto.focus(); return; }
+    const usd = E.moneda === 'USD';
+    if (!montoOriginal()) { toast('Ingresa un monto', true); fG.monto.focus(); return; }
+    if (usd && !E.tasa) { toast(E.buscandoTRM ? 'Espera un momento: estoy consultando la TRM' : 'Escribe la TRM para convertir a pesos', true); if (!E.buscandoTRM) fG.tasa.focus(); return; }
+    const monto = montoCOP();
     if (!E.catId) { toast('Elige una categoría', true); return; }
     const fila = {
       fecha: fG.fecha.value,
@@ -952,6 +1163,16 @@
     } else if (fG.numero_factura.value.trim() && !/factura/i.test(fila.descripcion || '')) {
       // Sin la migración 003: se conserva el n.º en la descripción para no perderlo.
       fila.descripcion = [fila.descripcion, `Factura ${fG.numero_factura.value.trim()}`, fG.nit.value.trim() && `NIT ${fG.nit.value.trim()}`].filter(Boolean).join(' · ');
+    }
+    if (S.v5) {
+      fila.moneda = E.moneda;
+      fila.monto_original = usd ? montoOriginal() : null;
+      fila.tasa_cambio = usd ? Math.round(E.tasa * 10000) / 10000 : null;
+    } else if (usd) {
+      // Sin la migración 005: el valor en dólares queda en la descripción para no perderlo.
+      const nota = `${fmtUSD(montoOriginal())} × TRM ${fmtTRM(E.tasa)}`;
+      if (!(fila.descripcion || '').includes('US$')) fila.descripcion = [fila.descripcion, nota].filter(Boolean).join(' · ');
+      toast('Guardado en pesos. Para conservar el valor en dólares aparte, ejecuta supabase/migraciones/005_moneda_usd.sql.', true);
     }
 
     // ¿Factura ya registrada? Avisar antes de guardar (una vez por cada conjunto de coincidencias).
@@ -1174,19 +1395,28 @@
   const textoProductos = (g) => itemsDe(g).map((it) => `${it.descripcion}${Number(it.cantidad) !== 1 ? ` x${it.cantidad}` : ''} ${fmt(it.valor)}`).join('; ');
 
   /** enlaces(g) -> [{ texto, url }] por cada factura del gasto */
+  const esUSDg = (g) => g.moneda === 'USD' && g.monto_original > 0;
+  const hayUSD = (lista) => lista.some(esUSDg);
+
   function construirLibro(lista, enlaces) {
     const maxFac = Math.max(1, ...lista.map((g) => g.adjuntos?.length || 0));
+    const conUSD = hayUSD(lista);
     const cab = ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método de pago', 'Monto', 'Productos', 'N.º factura', 'NIT',
+      ...(conUSD ? ['Monto USD', 'TRM'] : []),
       ...Array.from({ length: maxFac }, (_, i) => `Factura ${i + 1}`)];
     const MONEDA = '"$"#,##0';
     const filas = lista.map((g) => {
       const fac = enlaces(g).map((e) => ({ t: 's', v: e.texto, l: { Target: e.url, Tooltip: 'Abrir factura' } }));
+      const usd = esUSDg(g);
       return [g.fecha, catDe(g.categoria_id).nombre, g.proveedor || '', g.descripcion || '', g.metodo_pago || '',
-        { t: 'n', v: g.monto, z: MONEDA }, itemsDe(g).length || '', g.numero_factura || '', g.nit || '', ...fac];
+        { t: 'n', v: g.monto, z: MONEDA }, itemsDe(g).length || '', g.numero_factura || '', g.nit || '',
+        ...(conUSD ? (usd ? [{ t: 'n', v: g.monto_original, z: '"US$" #,##0.00' }, { t: 'n', v: g.tasa_cambio, z: '#,##0.00' }] : ['', '']) : []),
+        ...fac];
     });
     const ws = XLSX.utils.aoa_to_sheet([cab, ...filas,
       ['', '', '', '', 'TOTAL', { t: 'n', f: `SUM(F2:F${filas.length + 1})`, z: MONEDA }]]);
-    ws['!cols'] = [{ wch: 11 }, { wch: 15 }, { wch: 24 }, { wch: 32 }, { wch: 14 }, { wch: 13 }, { wch: 10 }, { wch: 16 }, { wch: 14 }, ...Array(maxFac).fill({ wch: 34 })];
+    ws['!cols'] = [{ wch: 11 }, { wch: 15 }, { wch: 24 }, { wch: 32 }, { wch: 14 }, { wch: 13 }, { wch: 10 }, { wch: 16 }, { wch: 14 },
+      ...(conUSD ? [{ wch: 12 }, { wch: 11 }] : []), ...Array(maxFac).fill({ wch: 34 })];
     ws['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(cab.length - 1)}${filas.length + 1}` };
 
     const prods = lista.flatMap((g) => itemsDe(g).map((it) => [g.fecha, g.proveedor || '', catDe(g.categoria_id).nombre, it.descripcion,
@@ -1285,11 +1515,16 @@
     try {
       const enlaces = await enlacesTemporales(lista);
       const maxFac = Math.max(0, ...lista.map((g) => g.adjuntos?.length || 0));
+      const conUSD = hayUSD(lista);
       const cab = ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método de pago', 'Monto', 'Productos', 'N.º factura', 'NIT',
+        ...(conUSD ? ['Monto USD', 'TRM'] : []),
         ...Array.from({ length: maxFac }, (_, i) => `Factura ${i + 1} (enlace 7 días)`)];
       const celda = (v) => (/[";\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v);
+      const dec = (n) => String(n).replace('.', ','); // decimales con coma, como Excel en Colombia
       const filas = lista.map((g) => [g.fecha, catDe(g.categoria_id).nombre, g.proveedor || '', g.descripcion || '', g.metodo_pago || '',
-        g.monto, textoProductos(g), g.numero_factura || '', g.nit || '', ...enlaces(g).map((e) => e.url)]);
+        g.monto, textoProductos(g), g.numero_factura || '', g.nit || '',
+        ...(conUSD ? (esUSDg(g) ? [dec(g.monto_original), dec(g.tasa_cambio)] : ['', '']) : []),
+        ...enlaces(g).map((e) => e.url)]);
       // Separador ";" para que Excel en español (Colombia) lo abra en columnas.
       const csv = [cab, ...filas].map((f) => f.map(celda).join(';')).join('\r\n');
       const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
