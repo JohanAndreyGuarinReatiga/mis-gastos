@@ -1054,7 +1054,7 @@
     const ia = await pIA;
     const r = combinarLecturas(local, ia, conocidos);
     if (!usarIA && IAFacturas?.config().activa && IAFacturas.config().llave && IAFacturas.uso().agotada) r.iaNota = 'IA sin cupo hoy: se usó el lector local';
-    else if (ia?.error) r.iaNota = IAFacturas.uso().agotada ? 'Se acabó el cupo gratuito de la IA por hoy: se usó el lector local' : `la IA falló (${String(ia.error.message || ia.error).slice(0, 120)}); se usó el lector local`;
+    else if (ia?.error) r.iaNota = IAFacturas.uso().agotada ? 'Se acabó el cupo gratuito de la IA por hoy: se usó el lector local' : `la IA falló (${String(ia.error.message || ia.error).slice(0, 400)}); se usó el lector local`;
     if (local.error && !ia?.fuentes) throw local.error;
     return r;
   }
