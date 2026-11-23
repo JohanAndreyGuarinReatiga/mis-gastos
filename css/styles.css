@@ -150,8 +150,8 @@ label.btn { flex-direction: row; text-transform: none; font-size: 17px; color: v
 .login-card label { text-align: left; }
 .login-card .muted { margin: -6px 0 10px; }
 .brand-big {
-  width: 88px; height: 88px; margin: 0 auto 6px; border-radius: 22px; display: grid; place-items: center; font-size: 46px;
-  background: linear-gradient(160deg, #34aadc, #007aff 55%, #5856d6); box-shadow: 0 8px 24px rgba(0, 122, 255, .35);
+  width: 88px; height: 88px; margin: 0 auto 6px; display: block; border-radius: 22px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
 }
 
 /* ---------- Estructura ---------- */

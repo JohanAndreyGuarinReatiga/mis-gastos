@@ -1,6 +1,6 @@
 // Service worker: permite instalar la app y abrirla aunque la red esté lenta.
 // Estrategia "red primero": siempre intenta la versión más nueva y usa la caché solo sin conexión.
-const CACHE = 'mis-gastos-v9';
+const CACHE = 'mis-gastos-v10';
 const SHELL = ['./', 'index.html', 'css/styles.css', 'js/config.js', 'js/lector.js', 'js/compresor.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
