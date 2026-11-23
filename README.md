@@ -17,6 +17,13 @@ las facturas en foto o PDF de cada uno.
   3. **OCR en español** (Tesseract.js) para fotos de tiquetes y facturas en papel.
 
   Todo corre en el navegador: las facturas no se envían a ningún servicio externo. Los campos que ya escribiste no se sobrescriben, y la categoría se aprende de tus gastos anteriores con el mismo proveedor.
+- **Lectura con IA ✨ (opcional):** con una llave gratuita de **Google Gemini** (se crea en [aistudio.google.com/apikey](https://aistudio.google.com/apikey), sin tarjeta), la app interpreta la factura con IA. Lista los productos con descripciones claras (por ejemplo, "LCH ENT ALQ 1L" → "Leche entera Alquería 1 L") y completa comercio, NIT, fecha, total y descripción.
+  - Usa el modelo **Flash-Lite** más reciente disponible para tu llave. Suele permitir unas **500 lecturas gratis al día** y 10–15 por minuto. Google puede cambiar estas cifras, así que el límite se puede ajustar.
+  - La cuota se reinicia cada día a medianoche hora del Pacífico, que son las 2–3 a. m. en Colombia.
+  - Corre en paralelo con el lector local. El QR de la factura electrónica siempre tiene prioridad porque es exacto.
+  - Si se acaba el cupo, **los gastos se siguen registrando** con el lector local. Solo aparece un aviso en **Ajustes → Lectura con IA**, junto con el contador de uso del día.
+  - La llave se guarda solo en el dispositivo. En el plan gratuito, Google puede usar lo que se le envía para mejorar sus productos; la lectura local no envía nada.
+- **Pagos mensuales 🔁:** suscripciones, servicios públicos, planes de celular o internet y débitos automáticos se reconocen por el texto de la factura (por ejemplo "suscripción", "débito automático", "periodo facturado"), por ser comercios típicos (Netflix, EPM, Claro…) o porque ya los pagaste en dos o más meses. Al agregar una factura de ese tipo, o al escribir el comercio a mano, se prellenan el **nombre del comercio, el NIT y la descripción** de tu último pago, además de la categoría y el método de pago.
 - **PDF con contraseña 🔓:** si una factura en PDF está protegida (por ejemplo, con tu cédula), la app pide la contraseña y guarda una copia **sin contraseña**. Con el PDF original y su contraseña, la lectura automática usa el texto real. Puedes elegir que la recuerde en tu celular para abrir sola los siguientes PDF; se olvida desde **Ajustes → Cuenta**. La contraseña nunca se sube a la nube.
 - **Varias facturas a la vez 📚:** en **Gastos → Registrar varias facturas a la vez**, o eligiendo varios archivos en un gasto nuevo, cada archivo se vuelve un gasto. La app los lee uno tras otro y los pone en una **lista de revisión**:
   - **✓ Lista:** se leyó bien el monto y no está repetida.
@@ -79,7 +86,8 @@ css/styles.css        Estilos responsivos (claro/oscuro)
 js/config.js          URL y llave pública de Supabase, categorías por defecto
 js/app.js             Lógica de la app
 js/lector.js          Lectura automática de facturas (QR DIAN, PDF, OCR)
-js/compresor.js       Optimización de fotos y PDF antes de subirlos
+js/compresor.js       Optimización de fotos y PDF, y PDF con contraseña
+js/ia.js              Lectura opcional con IA (Google Gemini, plan gratuito)
 sw.js                 Service worker (PWA)
 manifest.webmanifest  Datos de instalación de la PWA
 supabase/schema.sql   Tablas, reglas de seguridad y bucket de facturas

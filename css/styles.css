@@ -543,3 +543,10 @@ dialog.visor::backdrop { background: #000; }
 .cola-mas { margin-top: 12px; width: 100%; flex: 0 0 auto; min-height: 44px; }
 .acciones-varios { gap: 10px; flex-wrap: wrap; }
 .acciones-varios .btn { flex: 0 1 auto; }
+
+/* Lectura con IA */
+#card-ia h3 small { font-size: 13px; font-weight: 400; margin-left: 4px; }
+.aviso-ia { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--text); border-radius: 12px; padding: 10px 12px; font-size: 15px; margin: 4px 0 8px; }
+.aviso-ia.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.input-corto { width: 6.5em; text-align: right; flex: 0 0 auto; }
+.badge-rec { display: inline-block; font-size: 11px; font-weight: 600; color: var(--primary); background: var(--primary-soft); border-radius: 6px; padding: 0 5px; }

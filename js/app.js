@@ -976,6 +976,86 @@
     return new File([data], a.nombre || 'factura', { type: a.tipo || data.type });
   }
 
+  // ---------- Lector local + IA (opcional) ----------
+  /**
+   * Analiza una factura con el lector local y, si está activa, también con la IA (en paralelo).
+   * f: { original: archivo para el lector local, ia: archivo sin contraseña para la IA, clave }
+   * Nunca falla por la IA: si se acaba el cupo o hay error, queda el resultado local (r.iaNota lo explica).
+   */
+  async function analizarFactura(f, progreso) {
+    const conocidos = [...new Set(S.gastos.map((g) => g.proveedor).filter(Boolean))];
+    const usarIA = !!window.IAFacturas?.activa();
+    const pIA = usarIA
+      ? IAFacturas.analizar(f.ia || f.original, { categorias: S.cats.map((c) => c.nombre) }).catch((e) => { console.warn('IA', e); return { error: e }; })
+      : Promise.resolve(null);
+    let local;
+    try {
+      local = await LectorFacturas.analizar(f.original, { conocidos, clave: f.clave, progreso });
+    } catch (e) {
+      console.warn('Lector local', e);
+      local = { fuentes: [], error: e };
+    }
+    if (usarIA) progreso?.('Interpretando con IA…');
+    const ia = await pIA;
+    const r = combinarLecturas(local, ia, conocidos);
+    if (!usarIA && IAFacturas?.config().activa && IAFacturas.config().llave && IAFacturas.uso().agotada) r.iaNota = 'IA sin cupo hoy: se usó el lector local';
+    else if (ia?.error) r.iaNota = IAFacturas.uso().agotada ? 'Se acabó el cupo gratuito de la IA por hoy: se usó el lector local' : 'La IA no respondió: se usó el lector local';
+    if (local.error && !ia?.fuentes) throw local.error;
+    return r;
+  }
+
+  /** Une lo leído localmente con lo de la IA. El QR de la factura electrónica (exacto) siempre gana. */
+  function combinarLecturas(l, ia, conocidos = []) {
+    if (!ia || ia.error) return l;
+    const qr = (l.fuentes || []).includes('QR DIAN');
+    const r = { ...l, fuentes: [...(l.fuentes || []), 'IA'] };
+    // Datos de identificación: la IA suele leer mejor que el OCR; con QR se respeta el QR.
+    for (const k of ['nit', 'numero', 'fecha']) if (ia[k] && !(qr && l[k])) r[k] = ia[k];
+    // Proveedor: si el local reconoció uno de tus proveedores de siempre, se conserva ese nombre.
+    const conocido = l.proveedor && conocidos.some((p) => normTxt(p) === normTxt(l.proveedor));
+    if (ia.proveedor && !conocido) r.proveedor = ia.proveedor;
+    for (const k of ['metodo_pago', 'categoria', 'descripcion']) if (ia[k]) r[k] = ia[k];
+    if (ia.recurrente) r.recurrente = true;
+    if (!qr && ia.monto) {
+      r.monto = ia.monto;
+      r.montoSeguro = true;
+      if (ia.moneda === 'USD') r.moneda = 'USD'; else delete r.moneda;
+    }
+    // Productos: los de la IA (descripciones claras), en la misma moneda del monto elegido.
+    if (ia.items?.length && ((ia.moneda === 'USD') === (r.moneda === 'USD'))) r.items = ia.items;
+    return r;
+  }
+
+  // ---------- Pagos recurrentes (suscripciones, servicios, débitos automáticos) ----------
+  /**
+   * Si la factura es de un pago mensual, devuelve los datos de tu último gasto con ese comercio
+   * (nombre, NIT, descripción, categoría y método de pago) para prellenar el nuevo.
+   * Es recurrente si la factura lo indica (r.recurrente), si el comercio es típico de cobros mensuales
+   * o si ya lo pagaste en 2 o más meses distintos.
+   */
+  function plantillaRecurrente({ proveedor, nit, recurrente, descripcion, categoria }, excluirId = null) {
+    const nNit = normNit(nit), nProv = normTxt(proveedor);
+    if (!nNit && !nProv) return null;
+    const previos = S.gastos.filter((g) => g.id !== excluirId && ((nNit && normNit(g.nit) === nNit) || (nProv && normTxt(g.proveedor) === nProv)));
+    const meses = new Set(previos.map((g) => g.fecha.slice(0, 7))).size;
+    const tipico = window.LectorFacturas?.pareceRecurrente(proveedor || previos[0]?.proveedor || '');
+    if (!(recurrente || tipico || meses >= 2)) return null;
+    const ult = previos[0]; // S.gastos está ordenado del más reciente al más antiguo
+    const limpiar = (s) => String(s || '').replace(/\s*·\s*(Factura|NIT|US\$)[^·]*/g, '').trim();
+    const catNombre = ult ? catDe(ult.categoria_id).nombre : (categoria || '');
+    const tipo = /entreten/i.test(catNombre) ? 'Suscripción mensual' : /servicio/i.test(catNombre) ? 'Servicio mensual' : 'Pago mensual';
+    const prov = ult?.proveedor || proveedor || '';
+    return {
+      proveedor: prov,
+      nit: ult?.nit || nit || '',
+      descripcion: limpiar(ult?.descripcion) || descripcion || `${tipo}${prov ? ` · ${prov}` : ''}`,
+      categoria_id: ult?.categoria_id ?? null,
+      metodo_pago: ult?.metodo_pago || '',
+      meses,
+      desdeHistorial: !!ult,
+    };
+  }
+
   /** @param forzar si es true (botón), también rellena campos que el usuario no ha tocado pero ya tienen valor */
   async function leerFactura(file, forzar = false) {
     const E = S.edit;
@@ -985,18 +1065,15 @@
     try {
       file ||= await archivoParaLeer(E);
       if (!file) { banner('Primero agrega una foto o PDF de la factura.'); return; }
-      const conocidos = [...new Set(S.gastos.map((g) => g.proveedor).filter(Boolean))];
-      // Si es un PDF que tenía contraseña, el lector abre el original con ella (conserva el texto real).
-      const clave = E.nuevos.find((n) => n.original === file || n.file === file)?.clave;
-      const r = await LectorFacturas.analizar(file, {
-        conocidos,
-        clave,
-        progreso: (m) => { if (S.edit === E) banner(m, { cargando: true }); },
-      });
+      // Si es un PDF que tenía contraseña, el lector abre el original con ella (conserva el texto real)
+      // y la IA recibe la copia ya optimizada y sin contraseña.
+      const n = E.nuevos.find((x) => x.original === file || x.file === file);
+      const r = await analizarFactura({ original: file, ia: n?.file || file, clave: n?.clave },
+        (m) => { if (S.edit === E) banner(m, { cargando: true }); });
       if (S.edit !== E) return;
       const llenos = await aplicarLectura(E, r, forzar);
       if (S.edit !== E) return;
-      const fuente = r.fuentes.join(' + ');
+      const fuente = r.fuentes.join(' + ') + (r.iaNota ? `; ${r.iaNota}` : '');
       const rep = comprobarRepetidoEnForm();
       if (rep.length) {
         banner(`✨ Completé ${llenos.join(', ') || 'la lectura'} (${fuente}). ⚠️ Ojo: esta factura parece ya registrada (mira el aviso de arriba).`, { error: true });
@@ -1067,8 +1144,47 @@
         llenos.push('categoría');
       }
     }
+
+    // Pago recurrente: comercio, NIT y descripción como en tu último pago a ese comercio.
+    const plan = plantillaRecurrente({ proveedor: fG.proveedor.value || r.proveedor, nit: fG.nit.value || r.nit, recurrente: r.recurrente, descripcion: r.descripcion, categoria: r.categoria }, E.id);
+    if (plan) {
+      aplicarPlantilla(E, plan, puede);
+      llenos.push(plan.desdeHistorial ? `🔁 datos de tu pago mensual a ${plan.proveedor}` : '🔁 descripción de pago mensual');
+      E.recurrente = plan;
+    } else poner('descripcion', r.descripcion, 'descripción');
     return llenos;
   }
+
+  /** Prellena comercio, NIT y descripción (y categoría/pago si vienen del historial). */
+  function aplicarPlantilla(E, plan, puede = (k) => !E.tocado.has(k)) {
+    const fijar = (k, v) => {
+      if (!v || !puede(k)) return;
+      fG[k].value = v;
+      fG[k].classList.add('auto');
+    };
+    fijar('proveedor', plan.proveedor);
+    fijar('nit', plan.nit);
+    fijar('descripcion', plan.descripcion);
+    if (plan.metodo_pago && CFG.METODOS_PAGO.includes(plan.metodo_pago)) fijar('metodo_pago', plan.metodo_pago);
+    if (plan.categoria_id && !E.tocado.has('cat') && S.cats.some((c) => c.id === plan.categoria_id)) {
+      E.catId = plan.categoria_id;
+      renderChips();
+      $(`#form-cats [data-cat="${plan.categoria_id}"]`)?.classList.add('auto');
+    }
+  }
+
+  // Al escribir a mano un comercio de pago mensual, se prellenan NIT y descripción (si están vacíos).
+  fG.proveedor.addEventListener('change', () => {
+    const E = S.edit;
+    if (!E || E.id || fG.nit.value || fG.descripcion.value) return;
+    const plan = plantillaRecurrente({ proveedor: fG.proveedor.value });
+    if (!plan || !plan.desdeHistorial) return;
+    aplicarPlantilla(E, { ...plan, proveedor: null }, (k) => !E.tocado.has(k) || k === 'nit' || k === 'descripcion');
+    E.recurrente = plan;
+    const usados = [plan.nit && 'el NIT', plan.descripcion && 'la descripción', plan.categoria_id && 'la categoría'].filter(Boolean);
+    banner(`🔁 Pago mensual: usé ${usados.join(', ').replace(/, ([^,]*)$/, ' y $1')} de tu último pago a ${plan.proveedor}.`);
+    comprobarRepetidoEnForm();
+  });
 
   async function renderAdjForm() {
     const E = S.edit;
@@ -1119,6 +1235,55 @@
     clavesSesion = [];
     renderClaves();
     toast('Contraseñas olvidadas');
+  });
+
+  // ---------- Ajustes: lectura con IA ----------
+  function renderIA() {
+    if (!window.IAFacturas) { $('#card-ia').hidden = true; return; }
+    const c = IAFacturas.config();
+    const u = IAFacturas.uso();
+    $('#ia-activa').checked = c.activa;
+    if (document.activeElement !== $('#ia-limite')) $('#ia-limite').value = c.limite;
+    if (document.activeElement !== $('#ia-llave')) $('#ia-llave').value = c.llave ? '••••••••••••' + c.llave.slice(-4) : '';
+    const pct = Math.min(100, (u.usadas / u.limite) * 100);
+    $('#ia-relleno').style.width = `${pct}%`;
+    $('#ia-barra').classList.toggle('alto', u.agotada || pct >= 90);
+    $('#ia-usadas').textContent = c.llave ? `${u.usadas} de ~${u.limite} hoy` : 'Sin configurar';
+    $('#ia-detalle').textContent = c.llave ? (u.agotada ? ' · sin cupo hasta mañana' : ` · quedan ~${Math.max(0, u.limite - u.usadas)} (se reinicia cada día a las 2–3 a. m.)`) : ' · pega tu llave para activarla';
+    // Aviso: solo informa; los gastos se siguen registrando con el lector local.
+    let aviso = '';
+    if (c.llave && c.activa && u.agotada) aviso = '⚠️ Se agotó el cupo gratuito de la IA por hoy. Los gastos se siguen registrando normalmente; la lectura usa solo el lector local hasta que se reinicie el cupo.';
+    else if (c.llave && c.activa && pct >= 90) aviso = `⚠️ Vas en ${u.usadas} de ~${u.limite} lecturas con IA de hoy. Al agotarse, la app seguirá con el lector local.`;
+    else if (c.llave && u.ultimoError) aviso = `⚠️ Última lectura con IA: ${u.ultimoError}.`;
+    $('#ia-aviso').hidden = !aviso;
+    $('#ia-aviso').textContent = aviso;
+  }
+  window.addEventListener('ia-uso', () => { if (!$('#view-ajustes').hidden) renderIA(); });
+  $('#ia-activa').addEventListener('change', (e) => {
+    if (e.target.checked && !IAFacturas.config().llave) { e.target.checked = false; toast('Primero pega tu llave de Gemini', true); $('#ia-llave').focus(); return; }
+    IAFacturas.guardarConfig({ activa: e.target.checked });
+    renderIA();
+  });
+  $('#ia-limite').addEventListener('change', (e) => { IAFacturas.guardarConfig({ limite: Number(e.target.value) }); renderIA(); });
+  $('#ia-llave').addEventListener('focus', (e) => { if (e.target.value.startsWith('••')) e.target.value = ''; });
+  $('#ia-llave').addEventListener('blur', () => setTimeout(renderIA, 200));
+  $('#ia-probar').addEventListener('click', async () => {
+    const v = $('#ia-llave').value.trim();
+    if (v && !v.startsWith('••')) IAFacturas.guardarConfig({ llave: v });
+    if (!IAFacturas.config().llave) { toast('Pega la llave de Gemini', true); return; }
+    const btn = $('#ia-probar');
+    btn.disabled = true;
+    btn.textContent = 'Probando…';
+    try {
+      const modelo = await IAFacturas.probar();
+      IAFacturas.guardarConfig({ activa: true });
+      toast(`✓ IA lista (${modelo})`);
+    } catch (e) {
+      toast(`La llave no funcionó: ${e.message || e}`, true);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Guardar y probar';
+    renderIA();
   });
 
   /** Pide la contraseña de un PDF. Devuelve { clave, recordar } o null si el usuario lo omite. */
@@ -1410,7 +1575,7 @@
       nit: r.nit || '',
       cufe: r.cufe || null,
       metodo_pago: CFG.METODOS_PAGO.includes(r.metodo_pago) ? r.metodo_pago : (store.get('ultimoPago') || ''),
-      descripcion: '',
+      descripcion: r.descripcion || '',
       items: [],
     };
     if (usd) { try { d.tasa = (await obtenerTRM(d.fecha)).valor; } catch (e) { console.warn('TRM', e); } }
@@ -1420,6 +1585,16 @@
     const cat = categoriaSugerida(r.proveedor, r.categoria);
     d.catSugerida = !!cat;
     d.catId = cat?.id ?? (S.cats.find((c) => c.id === Number(store.get('ultimaCat'))) || S.cats.find((c) => /otros/i.test(c.nombre)) || S.cats[0])?.id ?? null;
+    // Pago recurrente: comercio, NIT, descripción, categoría y pago como la última vez.
+    const plan = plantillaRecurrente({ proveedor: d.proveedor, nit: d.nit, recurrente: r.recurrente, descripcion: r.descripcion, categoria: r.categoria });
+    if (plan) {
+      d.recurrente = true;
+      d.proveedor = plan.proveedor || d.proveedor;
+      d.nit = plan.nit || d.nit;
+      d.descripcion = plan.descripcion || d.descripcion;
+      if (plan.categoria_id && S.cats.some((c) => c.id === plan.categoria_id)) { d.catId = plan.categoria_id; d.catSugerida = true; }
+      if (plan.metodo_pago && CFG.METODOS_PAGO.includes(plan.metodo_pago)) d.metodo_pago = plan.metodo_pago;
+    }
     return d;
   }
 
@@ -1470,7 +1645,7 @@
       return `<li class="item" data-cola="${it.key}">
         <span class="item-ico">${img}</span>
         <div class="item-main"><div class="item-title">${esc(d?.proveedor || it.nombre)}</div>
-          <div class="item-sub"><span class="cola-est ${it.estado}">${ESTADOS[it.estado] || ''}</span>${esc(sub)}</div></div>
+          <div class="item-sub"><span class="cola-est ${it.estado}">${ESTADOS[it.estado] || ''}</span>${d?.recurrente ? '<span class="badge-rec">🔁 mensual</span> ' : ''}${esc(sub)}</div></div>
         <div class="item-amount">${d && d.monto ? fmt(d.monto) : '—'}${usd && d.montoOriginal ? `<span class="monto-usd">${fmtUSD(d.montoOriginal)}</span>` : ''}</div>
         ${it.estado === 'leyendo' || it.estado === 'guardando' ? '' : `<button type="button" class="btn btn-icon cola-quitar" data-cola-quitar="${it.key}" aria-label="Descartar">✕</button>`}
       </li>`;
@@ -1495,7 +1670,6 @@
   async function procesarCola() {
     const C = S.cola;
     C.corriendo = true;
-    const conocidos = [...new Set(S.gastos.map((g) => g.proveedor).filter(Boolean))];
     while (C.pend.length) {
       const f0 = C.pend.shift();
       const it = { key: `c${Math.random().toString(36).slice(2)}`, nombre: f0.name, estado: 'leyendo', motivo: 'Preparando…' };
@@ -1508,7 +1682,7 @@
         if (!it.n) { C.items = C.items.filter((x) => x !== it); renderCola(); continue; }
         let r;
         try {
-          r = await LectorFacturas.analizar(it.n.original, { conocidos, clave: it.n.clave, progreso: aviso });
+          r = await analizarFactura({ original: it.n.original, ia: it.n.file, clave: it.n.clave }, aviso);
         } catch (e) { console.warn('Lectura', e); r = {}; }
         it.d = await borradorDe(r);
         if (!r.monto && !r.fecha && !r.proveedor) it.errorLectura = true;
@@ -1660,6 +1834,7 @@
     renderAlmacenamiento();
     renderArchivoAjustes();
     renderClaves();
+    renderIA();
     renderHistorial();
   }
 

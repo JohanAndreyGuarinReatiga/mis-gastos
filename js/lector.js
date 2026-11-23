@@ -115,6 +115,9 @@
     ['Débito', /debito|maestro|electron/], ['Transferencia', /transferencia|pse\b/], ['Efectivo', /efectivo|cambio\s*[:$]/],
   ];
 
+  const RE_RECURRENTE = /suscripci|subscription|membres|mensualidad|plan mensual|cuota mensual|renovaci|auto-?renew|recurring|recurrente|debito automatico|cargo automatico|pago automatico|domiciliaci|periodo facturado|periodo de facturaci|billing period|next billing|proximo cobro|proxima factura|fecha limite de pago|pago oportuno|referencia de pago|numero de contrato|cuenta contrato/;
+  const PROV_RECURRENTES = /netflix|spotify|disney|hbo|\bmax\b|prime video|amazon prime|youtube|apple|icloud|google one|microsoft|office 365|xbox game pass|playstation plus|crunchyroll|paramount|deezer|dropbox|canva|adobe|epm|codensa|enel|vanti|gas natural|acueducto|claro|movistar|tigo|\bwom\b|\betb\b|\bune\b|directv|smart ?fit|bodytech|sura|sanitas|compensar|colmedica/;
+
   const RE_NO_PROVEEDOR = /factura|nit\b|n\.i\.t|tel[eé:.]|cel[:.]|direcc|calle|carrera|\bcra\b|\bcl\b|avenida|\bav\b|www|http|@|r[eé]gimen|responsable|\biva\b|resoluci|fecha|cliente|p[aá]gina|documento|equivalente|pos\b|caja|cajero|ticket|tiquete|original|copia|electr[oó]nica|venta|bogot|medell|cali\b|barranq|colombia/i;
 
   /** "LECHE ENTERA 1L" -> "Leche Entera 1L"; respeta medidas (1L, 500g), siglas cortas (AA) y S.A.S. */
@@ -215,6 +218,9 @@
 
     const items = parsearItems(lineas, usd);
     if (items.length) res.items = items;
+
+    // Pagos periódicos: suscripciones, servicios públicos, planes y débitos automáticos
+    if (RE_RECURRENTE.test(nTexto) || PROV_RECURRENTES.test(norm(res.proveedor || ''))) res.recurrente = true;
 
     return res;
   }
@@ -419,5 +425,6 @@
     return window.pdfjsLib;
   }
 
-  window.LectorFacturas = { analizar, parsearTexto, parsearQR, parsearItems, aNumero, esUSD, pdfjs, cargar };
+  const pareceRecurrente = (proveedor) => PROV_RECURRENTES.test(norm(proveedor));
+  window.LectorFacturas = { analizar, parsearTexto, parsearQR, parsearItems, aNumero, esUSD, pareceRecurrente, pdfjs, cargar };
 })();
