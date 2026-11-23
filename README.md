@@ -17,6 +17,13 @@ las facturas en foto o PDF de cada uno.
   3. **OCR en español** (Tesseract.js) para fotos de tiquetes y facturas en papel.
 
   Todo corre en el navegador: las facturas no se envían a ningún servicio externo. Los campos que ya escribiste no se sobrescriben, y la categoría se aprende de tus gastos anteriores con el mismo proveedor.
+- **PDF con contraseña 🔓:** si una factura en PDF está protegida (por ejemplo, con tu cédula), la app pide la contraseña y guarda una copia **sin contraseña**. Con el PDF original y su contraseña, la lectura automática usa el texto real. Puedes elegir que la recuerde en tu celular para abrir sola los siguientes PDF; se olvida desde **Ajustes → Cuenta**. La contraseña nunca se sube a la nube.
+- **Varias facturas a la vez 📚:** en **Gastos → Registrar varias facturas a la vez**, o eligiendo varios archivos en un gasto nuevo, cada archivo se vuelve un gasto. La app los lee uno tras otro y los pone en una **lista de revisión**:
+  - **✓ Lista:** se leyó bien el monto y no está repetida.
+  - **✏️ Revisar:** falta el monto o la TRM, o el monto es dudoso.
+  - **⚠️ Repetida:** ya registrada, o igual a otra factura de la misma lista.
+
+  Con **"Guardar N listas"** se guardan de una vez todas las que están listas; con **"Revisar uno por uno"** se abre cada una en el formulario y, al guardarla, pasa sola a la siguiente. Toca una para corregirla, o ✕ para descartarla. Si cierras la lista, el botón "📥 N facturas por registrar" la vuelve a abrir.
 - **Gastos en dólares 💵:** con el selector **COP / USD** se escribe el monto en dólares y la app lo convierte a pesos con la **TRM oficial vigente en la fecha del pago** (datos.gov.co, Superintendencia Financiera). Los fines de semana y festivos usa la TRM vigente ese día. Si tu banco cobró con otra tasa, la puedes cambiar. Se guardan el valor en USD y la tasa usada; los totales, gráficos y exportaciones van en pesos, y el Excel y el CSV agregan las columnas "Monto USD" y "TRM". Las facturas en dólares (con "USD" o "US$", o recibos en inglés) se detectan solas al leerlas.
 - **Visor integrado:** las fotos y los PDF se ven dentro de la app, a pantalla completa, con zoom, todas las páginas del PDF, flechas o deslizamiento para pasar de una factura a otra, y botón de descarga. Los PDF muestran una miniatura de su primera página.
 - **Productos del gasto:** cada gasto puede tener su lista de productos (cantidad y valor), que se llena sola al leer la factura o se edita a mano. Se muestra la suma y si cuadra con el monto. En la lista de gastos aparece como un desplegable oculto, "▸ N productos".

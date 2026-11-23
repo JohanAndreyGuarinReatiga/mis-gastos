@@ -91,6 +91,12 @@
           <h2>Gastos</h2>
           <span class="muted" id="lista-total"></span>
         </header>
+        <div class="row acciones-varios">
+        <button class="btn btn-primary" type="button" id="cola-abrir" hidden></button>
+        <label class="btn btn-file btn-varios">📚 Registrar varias facturas a la vez
+          <input type="file" accept="image/*,application/pdf" multiple id="in-varios" hidden>
+        </label>
+        </div>
         <div class="filters">
           <input type="search" id="f-buscar" placeholder="Buscar proveedor o descripción…">
           <input type="month" id="f-mes" aria-label="Mes">
@@ -165,6 +171,8 @@
         <div class="card">
           <h3>Cuenta</h3>
           <p class="muted" id="user-email"></p>
+          <p class="muted small" id="claves-info" hidden></p>
+          <button class="btn" id="claves-olvidar" type="button" hidden>Olvidar contraseñas de PDF</button>
           <button class="btn btn-danger" id="logout" type="button">Cerrar sesión</button>
         </div>
       </section>
@@ -270,6 +278,67 @@
   </dialog>
 
   <!-- ============ MODAL: FACTURA REPETIDA ============ -->
+  <dialog id="dlg-clave" class="sheet sheet-sm">
+    <form method="dialog" id="form-clave">
+      <header class="sheet-head">
+        <h3>🔒 PDF con contraseña</h3>
+        <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="sheet-body">
+        <p><b id="clave-archivo"></b> está protegido. Escribe la contraseña para quitarla antes de guardarlo; suele ser tu número de cédula o el NIT.</p>
+        <label>Contraseña
+          <span class="clave-campo">
+            <input type="password" name="clave" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+            <button type="button" class="btn btn-sm" id="clave-ver" aria-label="Mostrar contraseña">👁</button>
+          </span>
+        </label>
+        <p class="clave-error" id="clave-error" hidden>Contraseña incorrecta. Inténtalo de nuevo.</p>
+        <label class="check"><input type="checkbox" name="recordar"> Recordarla en este dispositivo para otros PDF</label>
+        <p class="muted small">La contraseña solo se usa en tu celular para abrir el archivo; no se sube a ningún lado. La copia que se guarda queda sin contraseña.</p>
+      </div>
+      <footer class="sheet-foot">
+        <button class="btn" type="button" id="clave-omitir">Omitir archivo</button>
+        <button class="btn btn-primary" type="submit">Desbloquear</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-varios" class="sheet sheet-sm">
+    <div>
+      <header class="sheet-head">
+        <h3>📚 Varias facturas</h3>
+        <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="sheet-body">
+        <p>Elegiste <b id="varios-n"></b> archivos. ¿Cómo los registro?</p>
+      </div>
+      <footer class="sheet-foot sheet-foot-col">
+        <button class="btn btn-primary" type="button" id="varios-separados">Un gasto por archivo</button>
+        <button class="btn" type="button" id="varios-juntos">Todos en este gasto</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="dlg-cola" class="sheet">
+    <div>
+      <header class="sheet-head">
+        <h3 id="cola-titulo">Facturas por registrar</h3>
+        <button class="btn btn-icon" type="button" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="sheet-body">
+        <p class="muted small" id="cola-estado"></p>
+        <ul class="list cola-lista" id="cola-lista"></ul>
+        <label class="btn btn-file btn-sm cola-mas">＋ Agregar más archivos
+          <input type="file" accept="image/*,application/pdf" multiple id="in-cola-mas" hidden>
+        </label>
+      </div>
+      <footer class="sheet-foot">
+        <button class="btn" type="button" id="cola-revisar">Revisar uno por uno</button>
+        <button class="btn btn-primary" type="button" id="cola-guardar">Guardar listos</button>
+      </footer>
+    </div>
+  </dialog>
+
   <dialog id="dlg-repetido" class="sheet sheet-sm">
     <div>
       <header class="sheet-head">

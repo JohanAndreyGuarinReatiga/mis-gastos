@@ -335,11 +335,11 @@
     return data.text || '';
   }
 
-  async function pdfTextoYCanvas(file) {
+  async function pdfTextoYCanvas(file, password) {
     await cargar(LIBS.pdfjs);
     const pdfjs = window.pdfjsLib;
     pdfjs.GlobalWorkerOptions.workerSrc = LIBS.pdfWorker;
-    const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer(), ...(password ? { password } : {}) }).promise;
     let texto = '';
     for (let p = 1; p <= Math.min(pdf.numPages, 3); p++) {
       const page = await pdf.getPage(p);
@@ -373,7 +373,7 @@
   /**
    * Analiza una factura.
    * @param {File|Blob} file  imagen o PDF
-   * @param {{conocidos?: string[], progreso?: (msg:string)=>void}} opts
+   * @param {{conocidos?: string[], progreso?: (msg:string)=>void, clave?: string}} opts  (clave: contraseña del PDF)
    * @returns {Promise<{monto?, fecha?, proveedor?, nit?, numero?, cufe?, categoria?, metodo_pago?, fuentes:string[], texto:string}>}
    */
   async function analizar(file, opts = {}) {
@@ -385,7 +385,7 @@
 
     if (esPdf) {
       progreso('Abriendo PDF…');
-      const r = await pdfTextoYCanvas(file);
+      const r = await pdfTextoYCanvas(file, opts.clave);
       texto = r.texto;
       canvas = r.canvas;
       if (texto.replace(/\s/g, '').length >= 40) fuentes.push('texto del PDF');

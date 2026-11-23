@@ -158,5 +158,43 @@
     return { file: out, antes: file.size, despues: out.size, cambiado: !!r };
   }
 
-  window.Compresor = { comprimir, PRESETS, formatoBytes };
+  // ---------- PDF con contraseña ----------
+  /** ¿El PDF pide contraseña para abrirse? */
+  async function necesitaClave(file) {
+    if (file.type !== 'application/pdf' || !window.LectorFacturas) return false;
+    const pdfjs = await LectorFacturas.pdfjs();
+    try {
+      const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+      pdf.destroy();
+      return false;
+    } catch (e) {
+      if (e?.name === 'PasswordException') return true;
+      throw e;
+    }
+  }
+
+  /**
+   * Quita la contraseña: abre el PDF con la clave y lo re-arma sin protección
+   * (cada página como imagen nítida). Lanza un error con code 'clave' si la clave es incorrecta.
+   * @returns {Promise<File>}
+   */
+  async function desbloquear(file, clave, presetId = 'equilibrado') {
+    const pdfjs = await LectorFacturas.pdfjs();
+    await LectorFacturas.cargar(PDFLIB);
+    let pdf;
+    try {
+      pdf = await pdfjs.getDocument({ data: await file.arrayBuffer(), password: clave }).promise;
+    } catch (e) {
+      if (e?.name === 'PasswordException') { const err = new Error('Contraseña incorrecta'); err.code = 'clave'; throw err; }
+      throw e;
+    }
+    // Mínimo calidad "equilibrado": es la única copia legible que quedará guardada.
+    const p = presetId === 'calidad' ? PRESETS.calidad : PRESETS.equilibrado;
+    try {
+      const bytes = await rasterizar(pdf, { ...p, q: Math.max(p.q, 0.85) });
+      return new File([bytes], `${baseNombre(file.name)}.pdf`, { type: 'application/pdf', lastModified: Date.now() });
+    } finally { pdf.destroy(); }
+  }
+
+  window.Compresor = { comprimir, necesitaClave, desbloquear, PRESETS, formatoBytes };
 })();
