@@ -181,7 +181,7 @@
 
   $('#logout').addEventListener('click', async () => {
     await sb.auth.signOut();
-    S.gastos = []; S.cats = []; S.urls.clear();
+    S.gastos = []; S.pendientes = []; S.cats = []; S.urls.clear();
   });
 
   // ---------- Datos ----------
@@ -217,16 +217,24 @@
       todos.push(...data);
       if (data.length < paso) break;
     }
-    S.gastos = todos.map((g) => ({
+    const lista = todos.map((g) => ({
       ...g,
       monto: Number(g.monto),
       monto_original: g.monto_original == null ? null : Number(g.monto_original),
       tasa_cambio: g.tasa_cambio == null ? null : Number(g.tasa_cambio),
     }));
+    // Pendientes (factura adjunta, datos sin confirmar): aparte, no cuentan en totales ni exportaciones.
+    S.pendientes = lista.filter((g) => g.estado === 'pendiente');
+    S.gastos = lista.filter((g) => g.estado !== 'pendiente');
     // S.v5: la base ya tiene la migración 005 (moneda, monto original y TRM).
     if (S.v5 === undefined) {
       if (todos.length) S.v5 = 'moneda' in todos[0];
       else S.v5 = !(await sb.from('gastos').select('moneda').limit(1)).error;
+    }
+    // S.v6: migración 006 (pendientes y fuente de la lectura).
+    if (S.v6 === undefined) {
+      if (todos.length) S.v6 = 'estado' in todos[0];
+      else S.v6 = !(await sb.from('gastos').select('estado').limit(1)).error;
     }
     calcularRepetidos();
   }
@@ -246,7 +254,8 @@
    * c: { id?, fecha, monto, proveedor, numero_factura, nit, cufe, items, hashes: [] }
    * Devuelve [{ g, motivos: [] }] ordenado por número de coincidencias.
    */
-  function buscarRepetidos(c, lista = S.gastos) {
+  const todosLosGastos = () => [...S.gastos, ...(S.pendientes || [])];
+  function buscarRepetidos(c, lista = todosLosGastos()) {
     const num = normNum(c.numero_factura);
     const nit = normNit(c.nit);
     const prov = normTxt(c.proveedor);
@@ -353,6 +362,9 @@
   }
 
   function renderInicio() {
+    const nP = S.pendientes?.length || 0;
+    $('#inicio-pend').hidden = !nP;
+    $('#inicio-pend').textContent = `⏳ ${nP} gasto${nP === 1 ? '' : 's'} pendiente${nP === 1 ? '' : 's'} por confirmar`;
     $('#mes-label').textContent = nombreMes(S.mes);
     const actual = gastosDelMes(S.mes);
     const total = suma(actual);
@@ -434,7 +446,31 @@
       (!q || `${g.proveedor || ''} ${g.descripcion || ''} ${catDe(g.categoria_id).nombre}`.toLowerCase().includes(q)));
   }
 
+  // ---------- Pendientes por confirmar ----------
+  function renderPendientes() {
+    const P = (S.pendientes || []).slice().sort((a, b) => b.id - a.id);
+    $('#card-pend').hidden = !P.length;
+    $('#pend-n').textContent = P.length ? String(P.length) : '';
+    $('#lista-pend').innerHTML = P.map((g) => {
+      const c = g.categoria_id ? catDe(g.categoria_id) : null;
+      const nAdj = g.adjuntos?.length || 0;
+      const sub = [fechaCorta(g.fecha), c?.nombre, g.lectura && (/\bIA\b/.test(g.lectura) ? '✨ IA' : g.lectura)].filter(Boolean).join(' · ');
+      return `<li class="item" data-pend="${g.id}">
+        <span class="item-ico" style="background:${esc(c?.color || '#94a3b8')}22">${esc(c?.icono || '🧾')}</span>
+        <div class="item-main"><div class="item-title">${esc(g.proveedor || g.descripcion || 'Factura sin datos')}</div>
+          <div class="item-sub"><span class="badge-pend">⏳ por confirmar</span> ${esc(sub)}</div></div>
+        <div class="item-amount">${g.monto ? fmt(g.monto) : '—'}${g.moneda === 'USD' && g.monto_original ? `<span class="monto-usd">${fmtUSD(g.monto_original)}</span>` : ''}<small>${nAdj ? `📎 ${nAdj}` : 'sin factura'}</small></div>
+      </li>`;
+    }).join('');
+  }
+  $('#lista-pend').addEventListener('click', (e) => {
+    const li = e.target.closest('[data-pend]');
+    const g = li && S.pendientes.find((x) => x.id === Number(li.dataset.pend));
+    if (g) abrirFormulario(g);
+  });
+
   function renderLista() {
+    renderPendientes();
     const sel = $('#f-cat');
     const val = sel.value;
     sel.innerHTML = '<option value="">Todas las categorías</option>' + S.cats.map((c) => `<option value="${c.id}">${esc(c.icono)} ${esc(c.nombre)}</option>`).join('');
@@ -471,8 +507,10 @@
   // ---------- Detalle ----------
   /** soloVer: se abre desde el formulario (aviso de repetido); oculta Editar/Eliminar para no perder lo que se está escribiendo. */
   async function abrirDetalle(id, { soloVer = false } = {}) {
-    const g = S.gastos.find((x) => x.id === id);
+    const g = todosLosGastos().find((x) => x.id === id);
     if (!g) return;
+    // Un pendiente se abre directo en el formulario para confirmar sus datos.
+    if (g.estado === 'pendiente' && !soloVer) { abrirFormulario(g); return; }
     S.detalle = g;
     const c = catDe(g.categoria_id);
     const adj = g.adjuntos || [];
@@ -492,6 +530,7 @@
         ${g.metodo_pago ? `<dt>Pago</dt><dd>${esc(g.metodo_pago)}</dd>` : ''}
         ${g.archivado_en ? `<dt>Factura</dt><dd>📦 En tu respaldo local<br><small>${esc(g.archivo_respaldo || '')} · ${esc(new Date(g.archivado_en).toLocaleDateString('es-CO'))}</small></dd>` : ''}
         ${g.descripcion ? `<dt>Descripción</dt><dd>${esc(g.descripcion)}</dd>` : ''}
+        ${g.lectura ? `<dt>Leída con</dt><dd>${/\bIA\b/.test(g.lectura) ? '<span class="lectura-ia">✨ ' + esc(g.lectura) + '</span>' : esc(g.lectura)}</dd>` : ''}
       </dl>
       ${itemsDe(g).length ? `<details class="prods det-prods"><summary><span>🛒 Productos</span><span class="muted">${itemsDe(g).length}</span></summary><div class="prods-body">${prodsHTML(itemsDe(g))}</div></details>` : ''}
       <div class="field">
@@ -655,9 +694,11 @@
     abrirFormulario(g);
   });
 
-  $('#det-borrar').addEventListener('click', async () => {
-    const g = S.detalle;
-    if (!g || !confirm(`¿Eliminar este gasto de ${fmt(g.monto)} y sus ${g.adjuntos?.length || 0} factura(s)? No se puede deshacer.`)) return;
+  $('#det-borrar').addEventListener('click', () => eliminarGasto(S.detalle));
+
+  async function eliminarGasto(g) {
+    const que = g?.estado === 'pendiente' ? `este gasto pendiente${g.proveedor ? ` de ${g.proveedor}` : ''}` : `este gasto de ${fmt(g?.monto)}`;
+    if (!g || !confirm(`¿Eliminar ${que} y sus ${g.adjuntos?.length || 0} factura(s)? No se puede deshacer.`)) return;
     loading(true);
     try {
       const rutas = (g.adjuntos || []).map((a) => a.ruta);
@@ -668,13 +709,15 @@
       const { error } = await sb.from('gastos').delete().eq('id', g.id);
       if (error) throw error;
       S.gastos = S.gastos.filter((x) => x.id !== g.id);
+      S.pendientes = (S.pendientes || []).filter((x) => x.id !== g.id);
       calcularRepetidos();
-      $('#dlg-detalle').close();
+      if ($('#dlg-detalle').open) $('#dlg-detalle').close();
+      if ($('#dlg-gasto').open && S.edit?.id === g.id) { S.edit.guardado = true; $('#dlg-gasto').close(); }
       toast('Gasto eliminado');
       refrescar();
     } catch (e) { fallo(e, 'No se pudo eliminar'); }
     loading(false);
-  });
+  }
 
   // ---------- Formulario de gasto ----------
   const fG = $('#form-gasto');
@@ -797,13 +840,20 @@
       tasa: g?.moneda === 'USD' ? g.tasa_cambio : null,
       tasaManual: false,
       buscandoTRM: false,
+      pendiente: g?.estado === 'pendiente', // se abre para confirmar sus datos
+      lectura: g?.lectura || null, // con qué se leyó la factura (QR, PDF, OCR, IA)
     };
     $('#form-prods').open = false;
     renderProds();
     $$('.auto', fG).forEach((el) => el.classList.remove('auto'));
     banner(null);
     if (!S.cats.some((c) => c.id === S.edit.catId)) S.edit.catId = g ? null : S.cats[0]?.id ?? null;
-    $('#form-title').textContent = g ? 'Editar gasto' : 'Nuevo gasto';
+    $('#form-title').textContent = !g ? 'Nuevo gasto' : S.edit.pendiente ? 'Confirmar gasto pendiente' : 'Editar gasto';
+    $('#btn-pendiente').hidden = !(S.v6 && (!g?.id || S.edit.pendiente));
+    $('#btn-guardar').textContent = S.edit.pendiente ? '✓ Confirmar' : 'Guardar';
+    $('#btn-descartar').hidden = !S.edit.pendiente;
+    // Con más botones, "Cancelar" sobra: la hoja ya tiene ✕ para cerrar.
+    $('#btn-cancelar').hidden = !$('#btn-pendiente').hidden;
     fG.fecha.value = g?.fecha || ymd(new Date());
     // Moneda: se arranca en COP y, si el gasto es en dólares, se pasa a USD con su tasa.
     S.edit.moneda = null;
@@ -832,6 +882,11 @@
     comprobarRepetidoEnForm();
     $('#dlg-gasto').showModal();
     if (!g) setTimeout(() => fG.monto.focus(), 50);
+    if (S.edit.pendiente) {
+      const E = S.edit;
+      const msg = `⏳ Gasto pendiente${E.lectura ? ` · leído con ${E.lectura}` : ''}. Revisa los datos y toca "Confirmar" para que cuente en tus totales.`;
+      renderAdjForm().then(() => { if (S.edit === E && !E.leyendo) banner(msg); });
+    }
   }
 
   function renderChips() {
@@ -1073,7 +1128,11 @@
       if (S.edit !== E) return;
       const llenos = await aplicarLectura(E, r, forzar);
       if (S.edit !== E) return;
-      const fuente = r.fuentes.join(' + ') + (r.iaNota ? `; ${r.iaNota}` : '');
+      // Con qué se leyó: queda guardado en el gasto y se muestra en su detalle.
+      E.lectura = r.fuentes.join(' + ');
+      const cfgIA = window.IAFacturas?.config();
+      const estadoIA = r.fuentes.includes('IA') ? '✓ con IA' : r.iaNota ? r.iaNota : cfgIA?.llave && cfgIA.activa ? 'sin IA' : 'IA desactivada';
+      const fuente = `${E.lectura} · ${estadoIA}`;
       const rep = comprobarRepetidoEnForm();
       if (rep.length) {
         banner(`✨ Completé ${llenos.join(', ') || 'la lectura'} (${fuente}). ⚠️ Ojo: esta factura parece ya registrada (mira el aviso de arriba).`, { error: true });
@@ -1450,11 +1509,15 @@
     if (S.v5) {
       fila.moneda = d.moneda || 'COP';
       fila.monto_original = usd ? d.montoOriginal : null;
-      fila.tasa_cambio = usd ? Math.round(d.tasa * 10000) / 10000 : null;
+      fila.tasa_cambio = usd && d.tasa ? Math.round(d.tasa * 10000) / 10000 : null;
     } else if (usd) {
       // Sin la migración 005: el valor en dólares queda en la descripción para no perderlo.
       const nota = `${fmtUSD(d.montoOriginal)} × TRM ${fmtTRM(d.tasa)}`;
       if (!(fila.descripcion || '').includes('US$')) fila.descripcion = [fila.descripcion, nota].filter(Boolean).join(' · ');
+    }
+    if (S.v6) {
+      fila.estado = d.estado || 'confirmado';
+      fila.lectura = d.lectura || null;
     }
     return { fila, sinV5: usd && !S.v5 };
   }
@@ -1502,31 +1565,40 @@
   }
   const avisoSinV5 = () => toast('Guardado en pesos. Para conservar el valor en dólares aparte, ejecuta supabase/migraciones/005_moneda_usd.sql.', true);
 
-  fG.addEventListener('submit', async (e) => {
-    e.preventDefault();
+  /** pendiente = true: guarda la factura con los datos que haya, sin exigir monto ni categoría. */
+  async function guardarFormulario(pendiente = false) {
     const E = S.edit;
+    if (!E) return;
     const usd = E.moneda === 'USD';
-    if (!montoOriginal()) { toast('Ingresa un monto', true); fG.monto.focus(); return; }
-    if (usd && !E.tasa) { toast(E.buscandoTRM ? 'Espera un momento: estoy consultando la TRM' : 'Escribe la TRM para convertir a pesos', true); if (!E.buscandoTRM) fG.tasa.focus(); return; }
-    if (!E.catId) { toast('Elige una categoría', true); return; }
+    if (pendiente && !S.v6) { toast('Para dejar gastos pendientes, ejecuta supabase/migraciones/006_pendientes_y_lectura.sql en Supabase.', true); return; }
+    if (pendiente && !E.nuevos.length && !E.existentes.some((a) => !E.borrar.includes(a.id))) { toast('Adjunta la factura para dejarla pendiente', true); return; }
+    if (!pendiente) {
+      if (!fG.fecha.value) { toast('Elige la fecha', true); fG.fecha.focus(); return; }
+      if (!montoOriginal()) { toast('Ingresa un monto', true); fG.monto.focus(); return; }
+      if (usd && !E.tasa) { toast(E.buscandoTRM ? 'Espera un momento: estoy consultando la TRM' : 'Escribe la TRM para convertir a pesos', true); if (!E.buscandoTRM) fG.tasa.focus(); return; }
+      if (!E.catId) { toast('Elige una categoría', true); return; }
+    }
     const { fila, sinV5 } = filaDesde({
-      fecha: fG.fecha.value, moneda: E.moneda, montoOriginal: montoOriginal(), tasa: E.tasa, monto: montoCOP(), catId: E.catId,
+      fecha: fG.fecha.value || ymd(new Date()), moneda: E.moneda, montoOriginal: montoOriginal(), tasa: E.tasa, monto: montoCOP(), catId: E.catId,
       proveedor: fG.proveedor.value, metodo_pago: fG.metodo_pago.value, descripcion: fG.descripcion.value,
       items: E.items, numero_factura: fG.numero_factura.value, nit: fG.nit.value, cufe: E.cufe,
+      estado: pendiente ? 'pendiente' : 'confirmado', lectura: E.lectura,
     }, E.teniaItems);
 
-    // ¿Factura ya registrada? Avisar antes de guardar (una vez por cada conjunto de coincidencias).
-    const rep = buscarRepetidos(candidatoForm());
-    const firma = rep.map((r) => r.g.id).join(',');
-    if (rep.length && E.repetidoAceptado !== firma) {
-      $('#repetido-lista').innerHTML = avisoRepetidoHTML(rep, rep.length === 1 ? 'Coincide con:' : `Coincide con ${rep.length} gastos:`);
-      $('#dlg-repetido').dataset.firma = firma;
-      $('#dlg-repetido').showModal();
-      return;
+    // ¿Factura ya registrada? Avisar antes de confirmar (una vez por cada conjunto de coincidencias).
+    if (!pendiente) {
+      const rep = buscarRepetidos(candidatoForm());
+      const firma = rep.map((r) => r.g.id).join(',');
+      if (rep.length && E.repetidoAceptado !== firma) {
+        $('#repetido-lista').innerHTML = avisoRepetidoHTML(rep, rep.length === 1 ? 'Coincide con:' : `Coincide con ${rep.length} gastos:`);
+        $('#dlg-repetido').dataset.firma = firma;
+        $('#dlg-repetido').showModal();
+        return;
+      }
     }
-    const eraEdicion = !!E.id;
-    const btn = $('#btn-guardar');
-    btn.disabled = true;
+    const eraEdicion = !!E.id && !E.pendiente;
+    const btns = [$('#btn-guardar'), $('#btn-pendiente')];
+    btns.forEach((b) => { b.disabled = true; });
     loading(true);
     try {
       await persistirGasto(fila, E); // E tiene id, nuevos, existentes y borrar
@@ -1537,7 +1609,7 @@
       // El evento "close" llega después: se espera para no mezclar este gasto con el siguiente de la cola.
       const cerrado = new Promise((r) => $('#dlg-gasto').addEventListener('close', r, { once: true }));
       $('#dlg-gasto').close();
-      toast(eraEdicion ? 'Gasto actualizado' : 'Gasto guardado');
+      toast(pendiente ? '⏳ Guardado como pendiente' : E.pendiente ? '✓ Gasto confirmado' : eraEdicion ? 'Gasto actualizado' : 'Gasto guardado');
       if (!E.cola) setTimeout(chequearLimite, 800);
       refrescar();
       if (E.cola) cerrado.then(seguirCola);
@@ -1545,9 +1617,12 @@
       falloGuardar(err);
       try { await cargarGastos(); } catch { /* ignorar */ }
     }
-    btn.disabled = false;
+    btns.forEach((b) => { b.disabled = false; });
     loading(false);
-  });
+  }
+  fG.addEventListener('submit', (e) => { e.preventDefault(); guardarFormulario(false); });
+  $('#btn-pendiente').addEventListener('click', () => guardarFormulario(true));
+  $('#btn-descartar').addEventListener('click', () => eliminarGasto(S.pendientes.find((x) => x.id === S.edit?.id)));
 
   // ---------- Varias facturas: cola de revisión ----------
   // S.cola = { items: [{ key, nombre, n (archivo preparado), d (datos del gasto), estado, motivo }], pend: File[], corriendo, guardando, unoAUno }
@@ -1576,6 +1651,7 @@
       cufe: r.cufe || null,
       metodo_pago: CFG.METODOS_PAGO.includes(r.metodo_pago) ? r.metodo_pago : (store.get('ultimoPago') || ''),
       descripcion: r.descripcion || '',
+      lectura: (r.fuentes || []).join(' + '),
       items: [],
     };
     if (usd) { try { d.tasa = (await obtenerTRM(d.fecha)).valor; } catch (e) { console.warn('TRM', e); } }
@@ -1653,6 +1729,7 @@
     $('#cola-guardar').textContent = listos ? `Guardar ${listos} lista${listos === 1 ? '' : 's'}` : 'Guardar listas';
     $('#cola-guardar').disabled = !listos || C.guardando;
     $('#cola-revisar').disabled = !conDatos || C.guardando;
+    $('#cola-pendientes').hidden = !S.v6 || !items.length || C.autoPendiente;
   }
 
   function abrirCola() {
@@ -1687,6 +1764,7 @@
         it.d = await borradorDe(r);
         if (!r.monto && !r.fecha && !r.proveedor) it.errorLectura = true;
         evaluar(it);
+        if (C.autoPendiente) { renderCola(); await guardarItemPendiente(it); }
       } catch (e) {
         console.error(e);
         it.estado = 'error';
@@ -1742,6 +1820,7 @@
       fecha: d.fecha, monto: d.monto, categoria_id: d.catId, proveedor: d.proveedor, metodo_pago: d.metodo_pago, descripcion: d.descripcion,
       numero_factura: d.numero_factura, nit: d.nit, cufe: d.cufe, items: d.items, adjuntos: [],
       moneda: d.moneda, monto_original: d.moneda === 'USD' ? d.montoOriginal : null, tasa_cambio: d.tasa,
+      lectura: d.lectura,
     });
     const E = S.edit;
     E.cola = key;
@@ -1780,6 +1859,59 @@
     if (!sig) return;
     S.cola.unoAUno = true;
     revisarDeCola(sig.key);
+  });
+
+  // ---------- Cola → pendientes ("confirmar después") ----------
+  /** Guarda una factura de la cola como gasto pendiente (con lo que se haya leído). */
+  async function guardarItemPendiente(it) {
+    const C = S.cola;
+    if (!C || !it.d || it.estado === 'guardando') return false;
+    it.estado = 'guardando';
+    it.motivo = '';
+    renderCola();
+    try {
+      it.t ||= { nuevos: [it.n] }; // conserva el id y las subidas si se reintenta
+      await persistirGasto(filaDesde({ ...it.d, estado: 'pendiente' }).fila, it.t);
+      C.items = C.items.filter((x) => x !== it);
+      C.enviadosPendiente = (C.enviadosPendiente || 0) + 1;
+      return true;
+    } catch (err) {
+      console.error(err);
+      it.estado = 'error';
+      it.motivo = `No se pudo guardar: ${err.message || err}`;
+      return false;
+    } finally {
+      renderCola();
+      if (!C.corriendo || !C.pend.length) terminarPendientes();
+    }
+  }
+
+  let tPend;
+  /** Cuando ya no queda nada por leer ni guardar: recarga, avisa y cierra la cola. */
+  function terminarPendientes() {
+    clearTimeout(tPend);
+    const C = S.cola;
+    tPend = setTimeout(async () => {
+      if (!C?.autoPendiente || C.pend.length || C.items.some((x) => x.estado === 'leyendo' || x.estado === 'guardando')) return;
+      try { await cargarGastos(); } catch (e) { console.warn(e); }
+      refrescar();
+      const n = C.enviadosPendiente || 0;
+      if (n) toast(`⏳ ${n} factura${n === 1 ? '' : 's'} guardada${n === 1 ? '' : 's'} como pendiente${n === 1 ? '' : 's'}. Confírmalas en Gastos.`);
+      C.enviadosPendiente = 0;
+      if (!C.items.length) { if (S.cola === C) S.cola = null; renderCola(); if ($('#dlg-cola').open) $('#dlg-cola').close(); }
+      else { C.autoPendiente = false; renderCola(); }
+    }, 300);
+  }
+
+  $('#cola-pendientes').addEventListener('click', async () => {
+    const C = S.cola;
+    if (!C) return;
+    if (!S.v6) { toast('Para dejar gastos pendientes, ejecuta supabase/migraciones/006_pendientes_y_lectura.sql en Supabase.', true); return; }
+    // Las que ya se leyeron se guardan ahora; las que faltan, apenas terminen de leerse.
+    C.autoPendiente = true;
+    if (C.corriendo) toast('Las facturas que faltan se guardarán como pendientes al terminar de leerse; puedes cerrar esta ventana.');
+    for (const it of C.items.filter((x) => x.d && x.estado !== 'guardando')) await guardarItemPendiente(it);
+    terminarPendientes();
   });
 
   $('#cola-guardar').addEventListener('click', async () => {
@@ -1845,7 +1977,7 @@
   const porOptimizar = (a) => !/-o\.\w+$/.test(a.ruta) && (!a.tamano || a.tamano > UMBRAL_OPT);
 
   function renderAlmacenamiento() {
-    const adj = S.gastos.flatMap((g) => g.adjuntos || []);
+    const adj = todosLosGastos().flatMap((g) => g.adjuntos || []);
     const total = adj.reduce((a, x) => a + (Number(x.tamano) || 0), 0);
     const pct = Math.min(100, (total / LIMITE_GRATIS) * 100);
     $('#uso-relleno').style.width = `${Math.max(pct, total ? 0.8 : 0)}%`;
@@ -1875,7 +2007,7 @@
   });
 
   $('#btn-optimizar').addEventListener('click', async () => {
-    const tareas = S.gastos.flatMap((g) => (g.adjuntos || []).map((a) => ({ g, a }))).filter(({ a }) => porOptimizar(a));
+    const tareas = todosLosGastos().flatMap((g) => (g.adjuntos || []).map((a) => ({ g, a }))).filter(({ a }) => porOptimizar(a));
     if (!tareas.length) return;
     if (!confirm(`Se revisarán ${tareas.length} factura(s) guardadas y se reemplazarán por versiones más livianas cuando se ahorre al menos un 15 %.\n\nEl texto sigue siendo legible, pero los archivos originales se sustituyen y no se puede deshacer.\n\n¿Continuar?`)) return;
     const btn = $('#btn-optimizar');
@@ -2198,7 +2330,7 @@
     get borrarGastos() { return store.get('archivoBorrarGastos') === '1'; },
   };
   const MAX_LOTE = 200 * 1024 * 1024; // tope por ZIP para no agotar la memoria del celular
-  const usoNube = () => S.gastos.reduce((a, g) => a + (g.adjuntos || []).reduce((b, x) => b + (Number(x.tamano) || 0), 0), 0);
+  const usoNube = () => todosLosGastos().reduce((a, g) => a + (g.adjuntos || []).reduce((b, x) => b + (Number(x.tamano) || 0), 0), 0);
   const pesoGasto = (g) => (g.adjuntos || []).reduce((b, x) => b + (Number(x.tamano) || 0), 0);
   const nombreMesCorto = (k) => { const [y, m] = k.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('es-CO', { month: 'short', year: 'numeric' }); };
 

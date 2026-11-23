@@ -68,6 +68,7 @@
           <div class="stat"><span class="stat-label">Promedio diario</span><span class="stat-value" id="st-prom">$0</span></div>
           <div class="stat"><span class="stat-label">Sin factura</span><span class="stat-value" id="st-sinfac">0</span></div>
         </div>
+        <a href="#gastos" class="aviso-pend" id="inicio-pend" hidden></a>
         <div class="grid-2">
           <div class="card">
             <h3>Por categoría</h3>
@@ -96,6 +97,11 @@
         <label class="btn btn-file btn-varios">📚 Registrar varias facturas a la vez
           <input type="file" accept="image/*,application/pdf" multiple id="in-varios" hidden>
         </label>
+        </div>
+        <div class="card card-pend" id="card-pend" hidden>
+          <div class="card-head"><h3>⏳ Pendientes por confirmar</h3><span class="muted" id="pend-n"></span></div>
+          <p class="muted small">Facturas ya adjuntas con datos sin confirmar. No cuentan en totales ni exportaciones hasta que las confirmes.</p>
+          <ul class="list" id="lista-pend"></ul>
         </div>
         <div class="filters">
           <input type="search" id="f-buscar" placeholder="Buscar proveedor o descripción…">
@@ -278,7 +284,9 @@
         </details>
       </div>
       <footer class="sheet-foot">
-        <button class="btn" type="button" data-close>Cancelar</button>
+        <button class="btn" type="button" data-close id="btn-cancelar">Cancelar</button>
+        <button class="btn btn-danger btn-borrar-pend" type="button" id="btn-descartar" hidden aria-label="Eliminar gasto pendiente" title="Eliminar">🗑</button>
+        <button class="btn" type="button" id="btn-pendiente" hidden title="Guardar la factura y confirmar los datos después">⏳ Pendiente</button>
         <button class="btn btn-primary" type="submit" id="btn-guardar">Guardar</button>
       </footer>
     </form>
@@ -353,6 +361,7 @@
         <label class="btn btn-file btn-sm cola-mas">＋ Agregar más archivos
           <input type="file" accept="image/*,application/pdf" multiple id="in-cola-mas" hidden>
         </label>
+        <button class="btn btn-sm cola-pend" type="button" id="cola-pendientes">⏳ Confirmar después: dejar todas como pendientes</button>
       </div>
       <footer class="sheet-foot">
         <button class="btn" type="button" id="cola-revisar">Revisar uno por uno</button>

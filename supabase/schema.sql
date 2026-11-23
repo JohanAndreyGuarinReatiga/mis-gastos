@@ -138,3 +138,15 @@ alter table public.gastos add column if not exists tasa_cambio numeric(12,4);
 do $$ begin
   alter table public.gastos add constraint gastos_moneda_chk check (moneda in ('COP', 'USD'));
 exception when duplicate_object then null; end $$;
+
+-- Gastos pendientes (factura adjunta, datos por confirmar) y fuente de la lectura
+alter table public.gastos add column if not exists estado text not null default 'confirmado';
+do $$ begin
+  alter table public.gastos add constraint gastos_estado_chk check (estado in ('confirmado', 'pendiente'));
+exception when duplicate_object then null; end $$;
+alter table public.gastos drop constraint if exists gastos_monto_check;
+do $$ begin
+  alter table public.gastos add constraint gastos_monto_chk check (monto > 0 or estado = 'pendiente');
+exception when duplicate_object then null; end $$;
+alter table public.gastos add column if not exists lectura text;
+create index if not exists gastos_pendientes_idx on public.gastos (user_id) where estado = 'pendiente';
