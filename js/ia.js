@@ -111,8 +111,8 @@
         fecha: { type: 'STRING', description: 'Fecha de la factura en formato AAAA-MM-DD' },
         moneda: { type: 'STRING', enum: ['COP', 'USD'] },
         total: { type: 'NUMBER', description: 'Total pagado. COP sin decimales; USD con centavos' },
-        metodo_pago: { type: 'STRING', enum: ['Efectivo', 'Débito', 'Crédito', 'Transferencia', 'Nequi', 'Daviplata', 'Otro', ''] },
-        categoria: { type: 'STRING', enum: [...categorias, ''] },
+        metodo_pago: { type: 'STRING', enum: ['Efectivo', 'Débito', 'Crédito', 'Transferencia', 'Nequi', 'Daviplata', 'Otro'] },
+        categoria: { type: 'STRING', ...(categorias.length ? { enum: categorias } : {}) },
         descripcion: { type: 'STRING', description: 'Resumen corto del gasto en español, máximo 60 caracteres' },
         recurrente: { type: 'BOOLEAN', description: 'true si es una suscripción, servicio público, plan de telefonía/internet, cuota o débito automático que se cobra cada mes' },
         productos: {
@@ -152,38 +152,70 @@ Reglas:
     if (!activa()) return null;
     const tipo = file.type || (/\.pdf$/i.test(file.name || '') ? 'application/pdf' : 'image/jpeg');
     if (file.size > 18 * 1024 * 1024) throw new Error('archivo muy grande para la IA');
-    const nombre = await modelo();
+    let nombre = await modelo();
+    const categorias = opts.categorias || [];
     const cuerpo = {
-      contents: [{ role: 'user', parts: [{ inline_data: { mime_type: tipo, data: await aBase64(file) } }, { text: PROMPT }] }],
-      generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: esquema(opts.categorias || []) },
+      contents: [{ role: 'user', parts: [{ inline_data: { mime_type: tipo, data: await aBase64(file) } }, { text: PROMPT + formato(categorias) }] }],
+      generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: esquema(categorias) },
     };
-    for (let intento = 0; ; intento++) {
+    let reintentoMinuto = false, reintentoServidor = false, reintentoModelo = false;
+    for (;;) {
       try {
         const d = await pedir(`${API}/models/${nombre}:generateContent`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
         });
-        registrar({ usadas: uso().usadas + 1, ultimoError: null });
-        const txt = d.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
-        return normalizar(JSON.parse(txt));
+        registrar({ usadas: uso().usadas + 1 });
+        const r = normalizar(leerJSON(d));
+        registrar({ ultimoError: null, ultimoOk: new Date().toISOString() });
+        return r;
       } catch (e) {
+        const msg = e.message || String(e);
         if (e.status === 429) {
           const det = JSON.stringify(e.detalle || {});
-          const porDia = /PerDay|per day|daily/i.test(det) || /PerDay/i.test(e.message);
+          const porDia = /PerDay|per day|daily/i.test(det) || /PerDay/i.test(msg);
           const espera = Number((/"retryDelay":"(\d+)/.exec(det) || [])[1]) || 20;
           // Límite por minuto: se espera lo que indica Google y se reintenta (una vez).
-          if (!porDia && intento === 0 && espera <= 60) { await esperar(espera * 1000 + 500); continue; }
+          if (!porDia && !reintentoMinuto && espera <= 60) { reintentoMinuto = true; await esperar(espera * 1000 + 500); continue; }
           if (porDia) registrar({ agotada: true, usadas: Math.max(uso().usadas, uso().limite), ultimoError: 'Se agotó la cuota gratuita de hoy' });
           else registrar({ ultimoError: 'Demasiadas solicitudes seguidas; se usó el lector local' });
-        } else if (e.status === 400 || e.status === 403) {
-          registrar({ ultimoError: /API key|API_KEY|permission/i.test(e.message) ? 'La llave no es válida o no tiene permiso' : e.message });
-        } else if (e.status === 404) {
-          ls.del('iaModelo'); // el modelo dejó de existir: se vuelve a elegir la próxima vez
-          registrar({ ultimoError: `Modelo no disponible (${nombre})` });
-        } else registrar({ ultimoError: e.message || String(e) });
+          throw Object.assign(new Error(porDia ? 'sin cupo hoy' : 'demasiadas solicitudes seguidas'), { status: 429 });
+        }
+        if ((e.status === 400 || e.status === 403) && /API key|API_KEY|permission|PERMISSION_DENIED/i.test(msg)) {
+          registrar({ ultimoError: 'La llave no es válida o no tiene permiso' });
+          throw Object.assign(new Error('la llave no es válida'), { status: e.status });
+        }
+        // Formato de respuesta no aceptado por este modelo: se reintenta sin el esquema
+        // (las instrucciones del formato ya van en el texto).
+        if (e.status === 400 && cuerpo.generationConfig.responseSchema) { delete cuerpo.generationConfig.responseSchema; continue; }
+        if (e.status === 404 && !reintentoModelo) { reintentoModelo = true; ls.del('iaModelo'); nombre = MODELO_RESPALDO; continue; }
+        // Google saturado (500/503) o respuesta ilegible: un reintento corto.
+        if ((e.status >= 500 || e.sinTexto) && !reintentoServidor) { reintentoServidor = true; await esperar(2500); continue; }
+        registrar({ ultimoError: msg });
         throw e;
       }
     }
   }
+
+  /** Extrae el JSON de la respuesta (tolera ```json ... ``` y texto alrededor). */
+  function leerJSON(d) {
+    const c = d.candidates?.[0];
+    const txt = (c?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || '').join('').trim();
+    if (!txt) {
+      const motivo = c?.finishReason || d.promptFeedback?.blockReason || 'respuesta vacía';
+      throw Object.assign(new Error(`la IA no devolvió datos (${motivo})`), { sinTexto: true });
+    }
+    try { return JSON.parse(txt); } catch { /* sigue */ }
+    const m = /\{[\s\S]*\}/.exec(txt.replace(/```(?:json)?/g, ''));
+    if (m) { try { return JSON.parse(m[0]); } catch { /* sigue */ } }
+    throw Object.assign(new Error('la IA respondió en un formato que no se pudo leer'), { sinTexto: true });
+  }
+
+  /** Formato pedido, en texto (sirve también cuando el modelo no acepta el esquema). */
+  const formato = (categorias) => `
+Responde SOLO con un objeto JSON con estas claves (omite las que no apliquen):
+{"proveedor": texto, "nit": texto, "numero_factura": texto, "fecha": "AAAA-MM-DD", "moneda": "COP" o "USD", "total": número,
+ "metodo_pago": uno de Efectivo|Débito|Crédito|Transferencia|Nequi|Daviplata|Otro,${categorias.length ? ` "categoria": uno de ${categorias.join('|')},` : ''}
+ "descripcion": texto corto, "recurrente": true o false, "productos": [{"descripcion": texto, "cantidad": número, "valor": número}]}`;
 
   const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
 
